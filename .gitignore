@@ -1,0 +1,5 @@
+# Python 仮想環境
+venv39/
+__pycache__/
+*.pyc
+.DS_Store
