@@ -31,16 +31,15 @@ tours = {
 }
 
 exo_tours = {
-    "barhop_exo": {"name": "Sendai Bar Hopping Tour (EXO)", "price": 20800},
-    "hungry_samurai_fd": {"name": "Hungry Samurai (SendaiFD, EXO)", "price": 34000},
-    "hirosaki_aomori_fd": {"name": "Hirosaki & Aomori Full Day Tour (EXO)", "price": 35000},
-    "hirosaki_hd": {"name": "Hirosaki Half Day Tour (EXO)", "price": 25000},
-    "hiraizumi": {"name": "Hiraizumi Full Day Tour (EXO)", "price": 69000},
-    "sendai_hd": {"name": "Sendai Half Day Tour (EXO)", "price": 33000},
-    "matsushima_shiogama_fd": {"name": "Shiogama's Delicacy Trail to Matsushima's Natural Wonders (EXO)", "price": 33800},
-    "foodie_exo": {"name": "Shiogama Foodie Tour (EXO)", "price": 25300},
-    "private_transfer": {"name": "Oneway Private Transfer: Sendai → Matsushima (EXO)", "price": 15000, "perVehicle": True},
-    "private_transfer_hiace": {"name": "Oneway Private Transfer: Sendai → Matsushima (Hiace, EXO)", "price": 22000, "perVehicle": True}
+    "barhop_exo": {"name": "Sendai Bar Hopping Tour (EXO)", "price": 25960},
+    "hungry_samurai_fd": {"name": "Hungry Samurai (SendaiFD, EXO)", "price": 38500},
+    "hirosaki_aomori_fd": {"name": "Hirosaki & Aomori Full Day Tour (EXO)", "price": 000},
+    "hirosaki_hd": {"name": "Hirosaki Half Day Tour (EXO)", "price": 000},
+    "hiraizumi": {"name": "Hiraizumi Full Day Tour (EXO)", "price": 89650},
+    "sendai_hd": {"name": "Sendai Half Day Tour (EXO)", "price": 38500},
+    "matsushima_shiogama_fd": {"name": "Shiogama's Delicacy Trail to Matsushima's Natural Wonders (EXO)", "price": 41800},
+    "private_transfer": {"name": "Oneway Private Transfer: Sendai → Matsushima (EXO)", "price": 19800, "perVehicle": True},
+    "private_transfer_hiace": {"name": "Oneway Private Transfer: Sendai → Matsushima (Hiace, EXO)", "price": 26400, "perVehicle": True}
 }
 
 tour_list = exo_tours if mode == "EXO" else tours
