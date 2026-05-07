@@ -149,6 +149,16 @@ exo_tours = {
         "price": 26400,
         "perVehicle": True
     },
+    "guide_assistant_on_foot": {
+        "name": "Guide Assistant On foot (Shin-Aomori / Sendai Station, EXO)",
+        "price": 19800,
+        "perGroup": True
+    },
+    "guide_assistant_private_car": {
+        "name": "Guide Assistant Private Car (Shin-Aomori / Sendai Station, EXO)",
+        "price": 30800,
+        "perGroup": True
+    },
 }
 
 tour_list = exo_tours if mode == "EXO" else tours
@@ -185,15 +195,24 @@ if st.button("✉️ 返信文を生成"):
     name = extract_name(email_text)
     base = tour_data.get("price", 0)
     per_vehicle = tour_data.get("perVehicle", False)
-    qty = 1 if per_vehicle else pax
+    per_group = tour_data.get("perGroup", False)
+    qty = 1 if (per_vehicle or per_group) else pax
 
     # --- 料金計算 ---
     if mode == "EXO":
         total = base * qty
         total_str = f"{total:,}"
-        unit_label = "vehicle" if per_vehicle else "pax"
+        if per_vehicle:
+            unit_label = "vehicle"
+            unit_jp = "台"
+        elif per_group:
+            unit_label = "group"
+            unit_jp = "グループ"
+        else:
+            unit_label = "pax"
+            unit_jp = "名"
         formula_en = f"({base:,} yen × {qty} {unit_label}) = **{total_str} yen (tax included)**"
-        formula_jp = f"（{base:,}円 × {qty}{'台' if per_vehicle else '名'}）＝ **{total_str}円（税込）**"
+        formula_jp = f"（{base:,}円 × {qty}{unit_jp}）＝ **{total_str}円（税込）**"
     else:
         pv_add = 10000 if type_ == "PV" else 0
         subtotal = base * pax + pv_add
