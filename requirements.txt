@@ -3,3 +3,10 @@ pandas
 openpyxl
 xlsxwriter
 pillow
+
+pypdf
+reportlab
+
+anthropic
+jpholiday
+python-pptx

@@ -1,0 +1,182 @@
+"""AI-based extraction: replaces the manual "paste email into NotebookLM with
+a fixed prompt" step. Calls the Claude API with the same 3 rules that used
+to live in the NotebookLM prompt (see プロンプト.rtf) and returns a
+BookingRequest, ready for pricing + document generation.
+
+Unlike extractor.py (regex-based, InsideJapan-only), this handles varied
+agent email formats because it's driven by an LLM rather than fixed labels.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+from .models import BookingRequest, Participant
+from .pricing import PricingError, price_booking
+from .rules import apply_bar_hop_rule, tba, tbd
+
+DEFAULT_MODEL = os.environ.get("TLST_EXTRACTION_MODEL", "claude-sonnet-4-6")
+
+SYSTEM_PROMPT = """あなたは旅行会社インアウトバウンド東北の予約事務アシスタントです。
+旅行会社・OTAとのメールのやり取り（本文そのまま、複数通が混在している場合あり）から、
+ツアー予約に必要な情報を抽出してください。以下の抽出ルールを厳守してください。
+
+1. 未確定・不明な情報は絶対に空欄にしないこと。ガイド名や電話番号など本文に記載がない
+   場合は "TBA" または "TBD" を該当フィールドに入れること（該当フィールドが無ければ
+   notes に記載）。ただし tour_name / tour_date / pax は本文から読み取れる限り正確に。
+2. 食事制限・アレルギーの記載があれば、原文の内容を落とさずに dietary_en
+   （英語で正確に）と dietary_jp_note（ガイド向けにわかりやすい日本語）の両方に
+   書き出すこと。無ければ空文字列でよい。
+3. 日付は必ず ISO 8601（YYYY-MM-DD）形式の tour_date に変換すること。
+4. participants は本文にある氏名（年齢が括弧書きであれば age に分離）を全て拾うこと。
+5. agent（依頼元会社名）はそのまま使うこと。ref_no（予約番号/参照番号）は
+   "Ref#:" や "Tour ID:" などのラベル文字列は含めず、番号・コード部分だけを
+   抜き出すこと（例："InsideJapan Tours Ref#: 0000001" なら "0000001" のみ）。
+
+抽出結果は必ず extract_booking ツールを呼び出して返してください。文章での説明は不要です。
+"""
+
+EXTRACTION_TOOL = {
+    "name": "extract_booking",
+    "description": "Structured booking data extracted from the email thread.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tour_name": {"type": "string"},
+            "tour_date": {"type": "string", "description": "ISO 8601 YYYY-MM-DD"},
+            "start_time": {"type": "string"},
+            "end_time": {"type": "string"},
+            "pax": {"type": "integer"},
+            "participants": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "age": {"type": ["integer", "null"]},
+                    },
+                    "required": ["name"],
+                },
+            },
+            "agent": {"type": "string"},
+            "agent_type": {"type": "string", "enum": ["AGT", "EXO", "BtoC"]},
+            "agent_contact": {"type": "string"},
+            "ref_no": {"type": "string", "description": "Number/code only, without labels like 'Ref#:' or 'Tour ID:'"},
+            "tour_type": {"type": "string", "enum": ["G", "PV"]},
+            "dietary_en": {"type": "string", "description": "Precise English wording, empty if none mentioned"},
+            "dietary_jp_note": {"type": "string", "description": "Plain Japanese warning for the guide, empty if none mentioned"},
+            "medical": {"type": "string"},
+            "inquiry_date": {"type": "string", "description": "ISO 8601 date the inquiry was received, if stated"},
+            "notes": {"type": "string", "description": "Anything else worth keeping for 備考・ゲスト情報・引継ぎ"},
+        },
+        "required": ["tour_name", "tour_date", "pax"],
+    },
+}
+
+
+class ExtractionError(RuntimeError):
+    pass
+
+
+def extract_booking_request(email_text: str, *, model: str = DEFAULT_MODEL) -> BookingRequest:
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover
+        raise ExtractionError("anthropic package is not installed") from exc
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ExtractionError(
+            "ANTHROPIC_API_KEY is not set. Set it as an environment variable "
+            "or in .streamlit/secrets.toml before running extraction."
+        )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=2000,
+        system=SYSTEM_PROMPT,
+        tools=[EXTRACTION_TOOL],
+        tool_choice={"type": "tool", "name": "extract_booking"},
+        messages=[{"role": "user", "content": email_text}],
+    )
+
+    tool_use_block = next(
+        (block for block in response.content if block.type == "tool_use"), None
+    )
+    if tool_use_block is None:
+        raise ExtractionError("Claude did not return a tool_use block")
+
+    return _to_booking(tool_use_block.input)
+
+
+def _to_booking(data: dict[str, object]) -> BookingRequest:
+    participants = [
+        Participant(name=p["name"], age=p.get("age"))
+        for p in data.get("participants", [])
+    ]
+    pax = data.get("pax") or len(participants) or 1
+
+    dietary_en = str(data.get("dietary_en", "") or "")
+    dietary_jp_note = str(data.get("dietary_jp_note", "") or "")
+    # `dietary` keeps the English wording (used by extractor.py / reply.py
+    # consumers); the Japanese guide-facing note travels in `notes` until a
+    # dedicated column is worth adding.
+    notes_parts = [str(data.get("notes", "") or "")]
+    if dietary_jp_note:
+        notes_parts.append(f"【アレルギー・食事制限（ガイド向け）】{dietary_jp_note}")
+    notes = "\n".join(part for part in notes_parts if part)
+
+    booking = BookingRequest(
+        tour_date=str(data.get("tour_date", "")),
+        tour_name=str(data.get("tour_name", "")),
+        pax=int(pax),
+        participants=participants,
+        agent=str(data.get("agent", "") or ""),
+        agent_type=str(data.get("agent_type", "AGT") or "AGT"),
+        agent_contact=str(data.get("agent_contact", "") or ""),
+        ref_no=str(data.get("ref_no", "") or ""),
+        tour_type=str(data.get("tour_type", "G") or "G"),
+        dietary=dietary_en,
+        medical=str(data.get("medical", "") or ""),
+        notes=notes,
+        start_time=str(data.get("start_time", "") or ""),
+        end_time=str(data.get("end_time", "") or ""),
+        inquiry_date=str(data.get("inquiry_date", "") or ""),
+        guide_name=tba(None),
+        guide_mobile=tbd(None),
+        emergency_contact=tbd(None),
+    )
+
+    # Customer invoice amount always comes from pricing.py's tour price
+    # table -- the bar-hop food/drink budget below is a separate,
+    # guide-side figure and must never overwrite it (see rules.py).
+    try:
+        booking = price_booking(booking)
+    except PricingError:
+        # Unknown tour in the pricing table -- leave amount as TBD rather
+        # than raising, per rule 3 ("未確定の情報...TBAまたはTBD").
+        booking = _with(booking, amount=None, amount_formula=tbd(None))
+
+    bar_hop_info = apply_bar_hop_rule(booking.tour_name, booking.tour_date, booking.pax)
+    if bar_hop_info:
+        bar_hop_note = (
+            f"【バーホッピング判定】{bar_hop_info['shop_count']}軒案内"
+            f"（{'金土日祝日' if bar_hop_info['shop_count'] == 2 else '平日'}実施）。"
+            f"飲食代目安: {bar_hop_info['food_budget_formula']}"
+        )
+        if bar_hop_info["guide_fee_addon"]:
+            bar_hop_note += f"（3軒目の店舗手配分としてガイド謝金に+{bar_hop_info['guide_fee_addon']:,}円を加算してください）"
+        notes = f"{booking.notes}\n{bar_hop_note}".strip()
+        if bar_hop_info["congestion_notice_en"]:
+            notes = f"{notes}\n{bar_hop_info['congestion_notice_en']}".strip()
+        booking = _with(booking, notes=notes)
+
+    return booking
+
+
+def _with(booking: BookingRequest, **changes: object) -> BookingRequest:
+    from dataclasses import replace
+
+    return replace(booking, **changes)

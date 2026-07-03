@@ -1,5 +1,6 @@
 # Python 仮想環境
 venv39/
+venv311/
 __pycache__/
 *.pyc
 .DS_Store
@@ -8,3 +9,14 @@ venv39/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Secrets / local data (tour portal)
+.env
+.streamlit/secrets.toml
+data/
+generated/
+*.db
+
+# Real customer PDFs kept for local reference only -- never commit (this
+# repo is public); contains real names, allergy/medical info, phone numbers.
+reference_examples/
