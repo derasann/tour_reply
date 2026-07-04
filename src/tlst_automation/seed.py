@@ -11,10 +11,11 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from . import db
-from .master import Agent, Guide, Stopover, Tour
+from .master import Agent, Guide, MeetingPoint, Stopover, Tour
 from .models import ItineraryStop
 from .pricing import AGT_NET_PRICES, EXO_GROSS_PRICES
 
@@ -132,6 +133,195 @@ TARIFF_TOURS = [
 ]
 
 
+
+# name (as printed in the tariff), inclusions, exclusions, meeting_point_text
+# -- extracted from Tariff_2025_TLST.pdf ("Included/Not included in price" fields).
+TARIFF_INCLUSIONS_EXCLUSIONS = [
+    (
+        'Back-alley Night Izakaya Hopping in Sendai',
+        ['Guide fee', 'food & drink（3 drinks & ３dishes)', 'insurance'],
+        ['Any additional meals and drinks', 'transport to/from meeting point', 'anything not listed as included'],
+        'McDonald’s Sendai Aobadori2 Chome-5-1 Ichibancho, Aoba Ward, Sendai, Miyagi 980-0811',
+    ),
+    (
+        'Bar Hopping in Koubuncho VEG',
+        ['Guide fee', 'food & drink -two different taverns of different styles', 'enjoying one drink and one plate of local cuisine at each', 'insurance'],
+        ['Any additional meals and drinks', 'transport to/from meeting point', 'anything not listed as included'],
+        'Hotel Grand Terrace Kokubuncho2-2-2, Kokubuncho, Aoba Ward, Sendai, Miyagi 980-0803',
+    ),
+    (
+        'BaNightlife& Tradition: Hachinohe Yokocho Izakaya Experience（AOMORI)',
+        ['Walking tour of alleyways', 'Visit to three different izakayasof different styles', 'enjoying one drink and some plates of local cuisine at each', 'English speaking guide to teach you the tips and tricks of navigating a local izakaya!', 'Insurance'],
+        ['Any additional meals and drinks', 'anything not listed as included'],
+        'Hachinohe Portal Museum “Hacchi”',
+    ),
+    (
+        'Back-alley Bar Hopping in Miyako (Iwate)',
+        ['・English speaking guide・2 plates and 2 drinks at each izakaya'],
+        ['Any additional meals and drinks', 'transport to/from meeting point', 'anything not listed as included'],
+        'Miyako Station',
+    ),
+    (
+        'Bar Hopping in Tsuruoka (Yamagata)',
+        ['Walking tour of Bunka-yokochoand Iroha-yokochoalleyways', 'Visit to three different izakayasof different styles', 'enjoying one drink and one plate of local cuisine at each', 'English speaking guide to teach you the tips and tricks of navigating a local izakaya!', 'Insurance'],
+        ['Any additional meals and drinks', 'anything not listed as included'],
+        'Sushi & TempraShibaraku',
+    ),
+    (
+        'Dake Onsen Bar Hopping Tour (Fukushima)',
+        ['Visit to three different izakayasof different styles', 'enjoying one drink and one plate of local cuisine at each', 'English speaking guide to teach you the tips and tricks of navigating a local izakaya!', 'Insurance'],
+        ['Any additional meals and drinks', 'anything not listed as included'],
+        'Dake Onsen',
+    ),
+    (
+        'Izakaya and Japanese “Snack Bar” Tour in Kakunodate (Akita)',
+        ['Guide fee', 'food & drink -two different taverns of different styles', 'enjoying one drink and one plate of local cuisine at each', 'insurance'],
+        ['Any additional meals and drinks', 'transport to/from meeting point', 'anything not listed as included'],
+        'Tachimachi Pocket Park 39-3, Iwase-machi, Kakunodate, Senboku-shi',
+    ),
+    (
+        'Hungry Samurai: Sendai Food & Culture day Tour (version with cab)',
+        ['Sake tasting', 'croquettes', 'taiyaki', 'tea', 'sasakamama', 'monaka', 'sweets by weight', 'Zuihoudenentrance fee', 'cab fare (2 sections)', 'English-speaking guide', 'insurance'],
+        ['Transportation to the meeting place', "anythingnot included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Foodie Delight: Culinary Walking Tour -150 min quick tour-',
+        ['Sake tasting', 'croquettes or dumplings', 'taiyaki', 'zunda shake', 'sasakamama', 'monaka', 'candies by weighthamburgers (or standing soba noodles)', 'English speaking guide', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        "Shiogama's 10 Tasting Treasures: Savoring Sweets, Seafood & Sake",
+        ['JR train and taxi fare', 'Seafood breakfast at Shiogama Wholesale Fish Market (A maximum of 3 toppings are complimentary)', 'Walking tour of Shiogama', 'Gourmet items : Miso gelato', 'local sweets', 'salt cookie and cake', 'dorayaki', 'sake tasting', 'candy', 'another sake tasting', 'tea tasting. English speaking guide', 'insurance'],
+        ['Any additional toppings will incur a guest surcharge on fish market', 'Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Shiogama’s Delicacy Trail to Matsushima’s Natural Wonders',
+        ['JR train and taxi fare', 'Sightseeing boat boarding fee', 'Morning Coffee', 'Walking tour of Shiogama', 'Gourmet items : gelato', 'local sweets', 'salt cookie', 'dorayaki', 'sake tasting', 'Seafood bowl for lunch', 'Kanrantei entrance fee and macha set', 'English speaking guide', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Oyster Fisherman’s Cruise & Seasonal Feast (version with JR train)',
+        ['JR train and taxi fare', 'Cruise of Matsushima Bay', '90-minute pleasure boat ride (oyster farming tour and Matsushima Bay cruise)', 'Seafood lunch at a local restaurant', 'English speaking Guide', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Cruise with an oyster fisherman for an all-you-can-eat oyster, visit picturesque Matsushima (version with JR and cab)',
+        ['JR train and taxi fare', 'Cruise of Matsushima Bay', '90-minute pleasure boat ride (oyster farming tour and Matsushima Bay cruise)', 'All you can eat oyster lunch', 'Kanrantei entrance fee', 'matcha set', 'English speaking Guide', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Fish & Feast with local fisherman! Fishing, Local Traditions, and BBQ Lunch',
+        ['English-speaking guide', 'JR train fare', 'Taxi fare', '90-minute fishing experience (including traditional net fishing and rod fishing)', 'Local seafood set meal', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Attracxi: Mysteries of the Three Holy Mountains of Dewa',
+        ['Chartered taxi', 'English guide fee', 'Yamabushi guide', 'Shojin Ryori (vegetarian temple cuisine)', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Hiraizumi Full Day Tour from Sendai',
+        ['Chartered taxi', 'English guide fee', 'Genbikei Dango', 'Admission to Chuson-ji Temple and lunch', 'Geibikei Gorge boat ride', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Master the Way of the Samurai',
+        ['Chartered taxi', 'English guide fee', 'Iaido program', 'lunch', 'Insurance'],
+        ['Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'Shiogama’s Delicacy Trail to Matsushima’s Natural Wonders',
+        ['Chartered taxi', 'English guide fee', 'Coffee at Shiogama Wholesale Fish Market', 'Walking tour of Shiogama', '3 Gourmet items : gelato', 'Dorayaki', 'Sake tasting', 'or local traditional sweets', 'Japanese-tea’s tea bag', 'Sushi for lunch', 'Sightseeing boat boarding fee', 'Entsu-in Temple entrance fee', 'Insurance'],
+        ['Any additional toppings will incur a guest surcharge on fish market', 'Any additional meals/drinks', "anything not included in the above 'included' list"],
+        '',
+    ),
+    (
+        'From Cask to Glass –Tohoku’s Craft Journey with Local Cuisine',
+        ['Brewery/distillery/winery tours (one drink included at each location)', 'Pairing dinner', 'Guide', 'Private vehicle', 'Insurance'],
+        ['Any additional meals or drinks', 'Anything not listed in the “Included” section above'],
+        '',
+    ),
+    (
+        'Step into Tradition: Craft, Culture, and Hot Springs in Naruko(Miyagi)',
+        ['Lacquered bamboo straw workshop', 'Lacquered bamboo straw', 'Local lunch (vegetarian available)', 'Guide', 'KokeshiDoll Painting Experience', 'Insurance'],
+        ['Any additional meals and drinks', 'Anything not included in the above included list'],
+        '',
+    ),
+    (
+        'Kyoto Sensu Painting & TosenkyoExperience',
+        ['Sensu Fan Painting Experience (your hand-painted fan will be shipped to your home) + TosenkyoGame*Includes private transportation from and back to your hotel', 'Insurance'],
+        ['Additional food and beverage costs', 'other items not included in "What\'s included in the price"'],
+        '',
+    ),
+    (
+        'Meet a Buddhist Monk',
+        ['Private Zazen Meditation + Matcha & Sweets Break + Sutra Copying Experience*Includes private transportation from and back to your hotel', 'Insurance'],
+        ['Additional food and beverage costs', 'other items not included in "What\'s included in the price"'],
+        '',
+    ),
+    (
+        'Exclusive To-ji Heritage Tour –Private Journey Through Kyoto’s Hidden Treasures',
+        ['Private Viewing of the Five-Story Pagoda (normally closed to the public) + Kondo (Main Hall) + Kodo (Lecture Hall) + Shoshibo(non-public area) + Kanchi-in + Shakyo(Sutra Copying) + Limited-Edition Goshuin(Temple Seal) *Includes private transportation from and back to your hotel', 'Insurance'],
+        ['Additional food and beverage costs', 'other items not included in "What\'s included in the price"'],
+        '',
+    ),
+    (
+        'Exclusive Meditation at a Hidden Temple -A Private Retreat at Ryosokuin',
+        ['Private Seated Meditation + Walking Meditation in a Temple Garden*Includes private transportation from and back to your hotel', 'Insurance'],
+        ['Additional food and beverage costs', 'other items not included in "What\'s included in the price"'],
+        '',
+    ),
+    (
+        'The Four Spirits of Zen -A Private Journey Through Kyoto’s Timeless Wisdom',
+        ['Private Meditation Experience + Walking Meditation in a Garden + Sutra Copying + Japanese Tea Ceremony *Includes private transportation from your hotel', 'all in-experience transfers', 'and return service to your hotel', 'Insurance'],
+        ['Additional food and beverage costs', 'other items not included in "What\'s included in the price"'],
+        '',
+    ),
+]
+
+def _normalize_tour_name(name: str) -> str:
+    name = name.lower()
+    name = re.sub(r"[’'“”\"]", "", name)
+    name = re.sub(r"[\-–—]", " ", name)
+    name = re.sub(r"[()（）]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def _matching_tour_names(tariff_title: str, existing_names: set[str]) -> list[str]:
+    """Tariff PDF titles have OCR-ish glitches and existing tour names have
+    their own spelling variants (seeded from several sources), so match by
+    normalized substring rather than requiring an exact string match."""
+    normalized_title = _normalize_tour_name(tariff_title)
+    matches = []
+    for name in existing_names:
+        normalized_name = _normalize_tour_name(name)
+        if len(normalized_title) < 8 or len(normalized_name) < 8:
+            continue
+        if normalized_title in normalized_name or normalized_name in normalized_title:
+            matches.append(name)
+    return matches
+
+
+def _meeting_point_name(meeting_point_text: str) -> str:
+    """First chunk of the tariff's meeting point text, before the address/
+    URL, as a short label for the MeetingPoint master."""
+    if not meeting_point_text:
+        return ""
+    head = re.split(r"[,\d]", meeting_point_text, maxsplit=1)[0]
+    return head.strip() or meeting_point_text.strip()
+
+
 def seed_all(conn: sqlite3.Connection) -> None:
     existing_guides = {g.name for g in db.list_guides(conn)}
     existing_agents = {a.company_name for a in db.list_agents(conn)}
@@ -199,6 +389,53 @@ def seed_all(conn: sqlite3.Connection) -> None:
                 )
             )
 
+    # Inclusions/Exclusions/meeting-point text straight from the tariff, so
+    # Booking Confirmations default to the official wording rather than
+    # freehand text. Applied by fuzzy name match since the tariff PDF's
+    # titles and the tour master's names come from different sources and
+    # don't always match character-for-character.
+    tours_by_name = {t.name: t for t in db.list_tours(conn)}
+    matched_meeting_points: dict[str, str] = {}
+    for tariff_title, inclusions, exclusions, meeting_point_text in TARIFF_INCLUSIONS_EXCLUSIONS:
+        matches = _matching_tour_names(tariff_title, set(tours_by_name.keys()))
+        if not matches:
+            # No existing tour master entry matched -- keep the tariff
+            # entry available as a new one rather than silently dropping it
+            # (e.g. the Attracxi-priced variant of a tour that otherwise
+            # only exists in its standard-priced form).
+            db.upsert_tour(
+                conn,
+                Tour(
+                    id=None, name=tariff_title, category="other",
+                    inclusions=inclusions, exclusions=exclusions,
+                ),
+            )
+            tours_by_name = {t.name: t for t in db.list_tours(conn)}
+            matches = [tariff_title]
+        for name in matches:
+            tour = tours_by_name[name]
+            if tour.inclusions and tour.exclusions:
+                continue  # don't clobber values already refined by hand
+            db.upsert_tour(
+                conn,
+                Tour(
+                    id=tour.id, name=tour.name, area=tour.area, category=tour.category,
+                    default_stopover_count=tour.default_stopover_count,
+                    meeting_point_en=tour.meeting_point_en or meeting_point_text,
+                    meeting_point_jp=tour.meeting_point_jp,
+                    inclusions=tour.inclusions or inclusions,
+                    exclusions=tour.exclusions or exclusions,
+                ),
+            )
+            if meeting_point_text:
+                matched_meeting_points[_meeting_point_name(meeting_point_text)] = meeting_point_text
+
+    existing_meeting_points = {mp.name for mp in db.list_meeting_points(conn)}
+    for name, en_text in matched_meeting_points.items():
+        if name and name not in existing_meeting_points:
+            db.upsert_meeting_point(conn, MeetingPoint(id=None, name=name, en_text=en_text))
+            existing_meeting_points.add(name)
+
 
 def main() -> None:
     conn = db.connect()
@@ -207,7 +444,8 @@ def main() -> None:
         f"Seeded: {len(db.list_guides(conn))} guides, "
         f"{len(db.list_agents(conn))} agents, "
         f"{len(db.list_tours(conn))} tours, "
-        f"{len(db.list_stopovers(conn))} stopovers."
+        f"{len(db.list_stopovers(conn))} stopovers, "
+        f"{len(db.list_meeting_points(conn))} meeting points."
     )
 
 

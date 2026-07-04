@@ -71,7 +71,7 @@ if booking is not None:
     updated = render_booking_form(conn, booking, key_prefix="new")
 
     if st.button("書類を生成する", type="primary", key="new_generate"):
-        generate_documents(updated)
+        generate_documents(conn, updated)
 
 st.divider()
 render_downloads()

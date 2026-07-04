@@ -232,12 +232,9 @@ GUIDE_REQUEST_EXTRACTION_TOOL = {
 }
 
 
-def extract_guide_request_document(text: str, *, model: str = DEFAULT_MODEL) -> dict[str, object]:
-    """Parse a past ガイド依頼書 (guide request doc) into tour_name +
-    itinerary rows, for saving as a reusable itinerary variant / seeding
-    the stopover price master. Returns the raw tool_use input (dict with
-    "tour_name" and "itinerary" list of dicts including "unit_price").
-    """
+def _call_extraction_tool(
+    system_prompt: str, tool: dict, text: str, *, model: str = DEFAULT_MODEL
+) -> dict[str, object]:
     try:
         import anthropic
     except ImportError as exc:  # pragma: no cover
@@ -254,9 +251,9 @@ def extract_guide_request_document(text: str, *, model: str = DEFAULT_MODEL) -> 
     response = client.messages.create(
         model=model,
         max_tokens=4000,
-        system=GUIDE_REQUEST_SYSTEM_PROMPT,
-        tools=[GUIDE_REQUEST_EXTRACTION_TOOL],
-        tool_choice={"type": "tool", "name": "extract_guide_request"},
+        system=system_prompt,
+        tools=[tool],
+        tool_choice={"type": "tool", "name": tool["name"]},
         messages=[{"role": "user", "content": text}],
     )
 
@@ -267,3 +264,47 @@ def extract_guide_request_document(text: str, *, model: str = DEFAULT_MODEL) -> 
         raise ExtractionError("Claude did not return a tool_use block")
 
     return tool_use_block.input
+
+
+def extract_guide_request_document(text: str, *, model: str = DEFAULT_MODEL) -> dict[str, object]:
+    """Parse a past ガイド依頼書 (guide request doc) into tour_name +
+    itinerary rows, for saving as a reusable itinerary variant / seeding
+    the stopover price master. Returns the raw tool_use input (dict with
+    "tour_name" and "itinerary" list of dicts including "unit_price").
+    """
+    return _call_extraction_tool(GUIDE_REQUEST_SYSTEM_PROMPT, GUIDE_REQUEST_EXTRACTION_TOOL, text, model=model)
+
+
+CONFIRMATION_SYSTEM_PROMPT = """あなたは旅行会社のBooking Confirmation（依頼元・ガイド向けの英語の確認書）を
+読み取るアシスタントです。渡されたテキストから、ツアー名・集合場所（英語・日本語）・
+Inclusions（含まれるもの）・Exclusions（含まれないもの）を抽出してください。
+
+- 集合場所は英語表記(meeting_point_en)と日本語表記(meeting_point_jp)を分けて抜き出すこと。
+  どちらか一方しか無ければ、あるほうだけ入れて他方は空文字列でよい。
+- Inclusions/Exclusionsは書類にある箇条書きを1項目ずつ配列に分けること。
+- 抽出結果は必ず extract_confirmation ツールを呼び出して返すこと。文章での説明は不要。
+"""
+
+CONFIRMATION_EXTRACTION_TOOL = {
+    "name": "extract_confirmation",
+    "description": "Structured meeting-point/inclusions/exclusions data from a Booking Confirmation document.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tour_name": {"type": "string"},
+            "meeting_point_en": {"type": "string"},
+            "meeting_point_jp": {"type": "string"},
+            "inclusions": {"type": "array", "items": {"type": "string"}},
+            "exclusions": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["tour_name"],
+    },
+}
+
+
+def extract_confirmation_document(text: str, *, model: str = DEFAULT_MODEL) -> dict[str, object]:
+    """Parse a past Booking Confirmation into tour_name + meeting point
+    (EN/JP) + inclusions/exclusions, for seeding the Meeting Point master
+    and cross-checking the Tour master's tariff-derived wording.
+    """
+    return _call_extraction_tool(CONFIRMATION_SYSTEM_PROMPT, CONFIRMATION_EXTRACTION_TOOL, text, model=model)

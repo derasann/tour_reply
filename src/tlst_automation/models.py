@@ -103,6 +103,7 @@ class BookingRequest:
     guide_fee_adjustment: int = 0  # manual tweak (e.g. extra time for a hotel pickup)
     emergency_contact: str = TBD
 
+    meeting_point_name: str = ""  # selected MeetingPoint master entry, if any (for photo lookup)
     meeting_point_en: str = ""
     meeting_point_jp: str = ""
     inclusions: list[str] = field(default_factory=list)

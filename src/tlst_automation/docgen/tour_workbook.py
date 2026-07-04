@@ -210,12 +210,20 @@ def _fill_drawing2(xml: str, booking: BookingRequest) -> str:
     return xml
 
 
-def generate_tour_workbook(booking: BookingRequest, output_path: Path) -> Path:
+MEETING_POINT_PHOTO_MEDIA_PATH = "xl/media/image1.png"  # the "photo" slot on 予約確認書(Oyster); see drawing2.xml rId3
+
+
+def generate_tour_workbook(
+    booking: BookingRequest, output_path: Path, *, meeting_point_photo_path: str | Path | None = None
+) -> Path:
     """Copy the real xlsx master and fill it in for one booking.
 
     Fills both 予約情報 (internal sheet) and 予約確認書(Oyster) (Booking
     Confirmation, via formulas back to 予約情報 plus its own guide/meeting
-    point/dietary fields).
+    point/dietary fields). If `meeting_point_photo_path` is given, it
+    replaces the photo shown next to the meeting point on the Confirmation
+    (stored as PNG bytes -- see portal_common's meeting-point photo upload,
+    which converts on save so this is a straight byte copy here).
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +241,9 @@ def generate_tour_workbook(booking: BookingRequest, output_path: Path) -> Path:
     parts[SHEET1] = sheet1.encode("utf-8")
     parts[SHEET2] = sheet2.encode("utf-8")
     parts[DRAWING2] = drawing2.encode("utf-8")
+
+    if meeting_point_photo_path and Path(meeting_point_photo_path).exists():
+        parts[MEETING_POINT_PHOTO_MEDIA_PATH] = Path(meeting_point_photo_path).read_bytes()
 
     xl.write_zip_parts(output_path, parts)
     return output_path

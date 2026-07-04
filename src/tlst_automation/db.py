@@ -16,7 +16,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
-from .master import Agent, Guide, Stopover, Tour
+from .master import Agent, Guide, MeetingPoint, Stopover, Tour
 from .models import ItineraryStop, ItineraryVariant
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "tours.db"
@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS tour_itinerary_variants (
     label TEXT NOT NULL DEFAULT '',
     itinerary TEXT DEFAULT '[]',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS meeting_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    en_text TEXT DEFAULT '',
+    jp_text TEXT DEFAULT '',
+    photo_path TEXT DEFAULT ''
 );
 """
 
@@ -287,4 +295,32 @@ def delete_tour(conn: sqlite3.Connection, tour_id: int) -> None:
 
 def delete_stopover(conn: sqlite3.Connection, stopover_id: int) -> None:
     conn.execute("DELETE FROM stopovers WHERE id = ?", (stopover_id,))
+    conn.commit()
+
+
+def upsert_meeting_point(conn: sqlite3.Connection, meeting_point: MeetingPoint) -> int:
+    payload = asdict(meeting_point)
+    meeting_point_id = payload.pop("id")
+    if meeting_point_id is None:
+        columns = ", ".join(payload.keys())
+        placeholders = ", ".join(f":{k}" for k in payload.keys())
+        cursor = conn.execute(
+            f"INSERT OR REPLACE INTO meeting_points ({columns}) VALUES ({placeholders})", payload
+        )
+        conn.commit()
+        return cursor.lastrowid
+    assignments = ", ".join(f"{k} = :{k}" for k in payload.keys())
+    payload["id"] = meeting_point_id
+    conn.execute(f"UPDATE meeting_points SET {assignments} WHERE id = :id", payload)
+    conn.commit()
+    return meeting_point_id
+
+
+def list_meeting_points(conn: sqlite3.Connection) -> list[MeetingPoint]:
+    rows = conn.execute("SELECT * FROM meeting_points ORDER BY name").fetchall()
+    return [MeetingPoint(**dict(row)) for row in rows]
+
+
+def delete_meeting_point(conn: sqlite3.Connection, meeting_point_id: int) -> None:
+    conn.execute("DELETE FROM meeting_points WHERE id = ?", (meeting_point_id,))
     conn.commit()

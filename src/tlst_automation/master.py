@@ -58,3 +58,17 @@ class Stopover:
     unit_price: int | None = None
     category: str = ""
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class MeetingPoint:
+    """A reusable named meeting point (e.g. "JR Sendai Station 2F"), shared
+    across tours/bookings rather than retyped each time. `photo_path` is a
+    local file path to the photo pasted into the Booking Confirmation.
+    """
+
+    id: int | None
+    name: str
+    en_text: str = ""
+    jp_text: str = ""
+    photo_path: str = ""

@@ -37,6 +37,7 @@ from tlst_automation import rules  # noqa: E402
 from tlst_automation.rules import tbd  # noqa: E402
 
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
+MEETING_POINT_PHOTOS_DIR = Path(__file__).resolve().parent / "data" / "meeting_point_photos"
 ITINERARY_COLUMNS = ["時間", "立ち寄り先", "支払額", "支払方法", "立ち寄り先情報"]
 CHECKLIST_LABELS = {
     "pre": ["見積提出", "コンファメーション送付", "インボイス送付"],
@@ -312,8 +313,38 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
 
         emergency_contact = st.text_input("緊急連絡先", value=booking.emergency_contact, key=f"{key_prefix}_emergency_contact")
     with col2:
+        meeting_points = db.list_meeting_points(conn)
+        mp_choice_names = ["(カスタム入力)"] + [mp.name for mp in meeting_points]
+        mp_last_key = f"{key_prefix}_meeting_point_last"
+        if mp_last_key not in st.session_state:
+            st.session_state[mp_last_key] = (
+                booking.meeting_point_name if booking.meeting_point_name in mp_choice_names else "(カスタム入力)"
+            )
+
+        meeting_point_choice = st.selectbox(
+            "集合場所（プルダウン。選ぶと写真もコンファメーションに反映されます）",
+            mp_choice_names,
+            index=mp_choice_names.index(booking.meeting_point_name) if booking.meeting_point_name in mp_choice_names else 0,
+            key=f"{key_prefix}_meeting_point_choice",
+        )
+
+        if st.session_state[mp_last_key] != meeting_point_choice:
+            st.session_state[mp_last_key] = meeting_point_choice
+            if meeting_point_choice != "(カスタム入力)":
+                selected_mp = next(mp for mp in meeting_points if mp.name == meeting_point_choice)
+                st.session_state[f"{key_prefix}_mp_en"] = selected_mp.en_text
+                st.session_state[f"{key_prefix}_mp_jp"] = selected_mp.jp_text
+
         meeting_point_en = st.text_area("集合場所（英語）", value=booking.meeting_point_en, height=100, key=f"{key_prefix}_mp_en")
         meeting_point_jp = st.text_area("集合場所（日本語）", value=booking.meeting_point_jp, height=100, key=f"{key_prefix}_mp_jp")
+
+        if meeting_point_choice != "(カスタム入力)":
+            selected_mp_preview = next(mp for mp in meeting_points if mp.name == meeting_point_choice)
+            if selected_mp_preview.photo_path and Path(selected_mp_preview.photo_path).exists():
+                st.image(selected_mp_preview.photo_path, width=200, caption="コンファメーションに反映される写真")
+            else:
+                st.caption("この集合場所には写真が未登録です（マスタ管理ページで追加できます）。")
+
         inclusions_text = st.text_area(
             "Inclusions（1行1項目）", value="\n".join(booking.inclusions), height=100, key=f"{key_prefix}_inclusions"
         )
@@ -436,6 +467,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         guide_fee_shop_arrangement_bonus=shop_arrangement_bonus,
         guide_fee_adjustment=int(guide_fee_adjustment),
         emergency_contact=emergency_contact,
+        meeting_point_name=meeting_point_choice if meeting_point_choice != "(カスタム入力)" else "",
         meeting_point_en=meeting_point_en,
         meeting_point_jp=meeting_point_jp,
         inclusions=[line for line in inclusions_text.splitlines() if line.strip()],
@@ -448,7 +480,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     )
 
 
-def generate_documents(updated: BookingRequest) -> None:
+def generate_documents(conn, updated: BookingRequest) -> None:
     """Generate the 3 documents + PDFs for this session only, and stash the
     results in st.session_state so render_downloads() can show them
     persistently (including across reruns triggered by download clicks).
@@ -457,13 +489,23 @@ def generate_documents(updated: BookingRequest) -> None:
     tool only generates and hands off files -- the source email/PDF stays
     in Google Drive as before, and this app never accumulates a history of
     past bookings. Only reference master data (guides/agents/tours/
-    stopovers/itinerary variants) persists, via db.py.
+    stopovers/meeting points/itinerary variants) persists, via db.py.
     """
     out_dir = GENERATED_DIR / (updated.booking_no or "current")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    meeting_point_photo_path = None
+    if updated.meeting_point_name:
+        matched_mp = next(
+            (mp for mp in db.list_meeting_points(conn) if mp.name == updated.meeting_point_name), None
+        )
+        if matched_mp and matched_mp.photo_path:
+            meeting_point_photo_path = matched_mp.photo_path
+
     with st.spinner("Excel/PowerPointを生成中..."):
-        workbook_path = generate_tour_workbook(updated, out_dir / "tour_workbook.xlsx")
+        workbook_path = generate_tour_workbook(
+            updated, out_dir / "tour_workbook.xlsx", meeting_point_photo_path=meeting_point_photo_path
+        )
         pptx_path = generate_guide_request(updated, out_dir / "guide_request.pptx")
     st.success("Excel/PowerPointを生成しました。")
 
@@ -496,6 +538,24 @@ def _booking_out_dir(generated: dict) -> Path:
     out_dir = GENERATED_DIR / (generated["booking_no"] or "current")
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
+
+
+def save_meeting_point_photo(image_bytes: bytes, meeting_point_id: int) -> str:
+    """Normalize any uploaded/extracted image to PNG and store it under
+    data/ (gitignored), keyed by meeting point id so re-saving just
+    overwrites the same file. Returns the saved path as a string.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    MEETING_POINT_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+    photo_path = MEETING_POINT_PHOTOS_DIR / f"{meeting_point_id}.png"
+    image = Image.open(BytesIO(image_bytes))
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGB")
+    image.save(photo_path, format="PNG")
+    return str(photo_path)
 
 
 def render_downloads() -> None:

@@ -16,10 +16,14 @@ from pypdf import PdfReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from portal_common import get_conn  # noqa: E402
+from portal_common import get_conn, save_meeting_point_photo  # noqa: E402
 from tlst_automation import db  # noqa: E402
-from tlst_automation.ai_extractor import ExtractionError, extract_guide_request_document  # noqa: E402
-from tlst_automation.master import Agent, Guide, Stopover, Tour  # noqa: E402
+from tlst_automation.ai_extractor import (  # noqa: E402
+    ExtractionError,
+    extract_confirmation_document,
+    extract_guide_request_document,
+)
+from tlst_automation.master import Agent, Guide, MeetingPoint, Stopover, Tour  # noqa: E402
 from tlst_automation.models import ItineraryStop  # noqa: E402
 
 st.set_page_config(page_title="マスタ管理 - ツアー予約割当ポータル", layout="wide")
@@ -236,6 +240,174 @@ if st.button("立ち寄り先単価を保存", type="primary", key="save_stopove
             db.delete_stopover(conn, stopover.id)
     st.success("立ち寄り先単価を保存しました（値上げなどの反映は次回以降の書類生成から適用されます）。")
     st.rerun()
+
+st.divider()
+
+# --- 集合場所 ---------------------------------------------------------------
+st.header("集合場所")
+st.caption("Booking Confirmationの「集合場所」プルダウンから選べます。写真を登録すると確認書に反映されます。")
+meeting_points = db.list_meeting_points(conn)
+meeting_points_df = pd.DataFrame(
+    [
+        {"id": mp.id, "name": mp.name, "en_text": mp.en_text, "jp_text": mp.jp_text, "写真": bool(mp.photo_path)}
+        for mp in meeting_points
+    ],
+    columns=["id", "name", "en_text", "jp_text", "写真"],
+)
+edited_meeting_points = st.data_editor(
+    meeting_points_df,
+    num_rows="dynamic",
+    width="stretch",
+    key="meeting_points_editor",
+    column_config={
+        "id": st.column_config.NumberColumn("id", disabled=True),
+        "写真": st.column_config.CheckboxColumn("写真", disabled=True),
+    },
+)
+if st.button("集合場所を保存", type="primary", key="save_meeting_points"):
+    kept_ids = set()
+    for row in edited_meeting_points.to_dict("records"):
+        if not str(row.get("name") or "").strip():
+            continue
+        row_id = int(row["id"]) if pd.notna(row.get("id")) else None
+        existing = next((mp for mp in meeting_points if mp.id == row_id), None)
+        new_id = db.upsert_meeting_point(
+            conn,
+            MeetingPoint(
+                id=row_id,
+                name=row.get("name") or "",
+                en_text=row.get("en_text") or "",
+                jp_text=row.get("jp_text") or "",
+                photo_path=existing.photo_path if existing else "",
+            ),
+        )
+        kept_ids.add(row_id or new_id)
+    for meeting_point in meeting_points:
+        if meeting_point.id not in kept_ids:
+            db.delete_meeting_point(conn, meeting_point.id)
+    st.success("集合場所を保存しました。")
+    st.rerun()
+
+st.subheader("写真の登録・差し替え")
+meeting_points = db.list_meeting_points(conn)
+if not meeting_points:
+    st.caption("集合場所がまだ登録されていません。上の表で追加してください。")
+else:
+    photo_target_name = st.selectbox(
+        "集合場所を選択", [mp.name for mp in meeting_points], key="mp_photo_target"
+    )
+    photo_target = next(mp for mp in meeting_points if mp.name == photo_target_name)
+    if photo_target.photo_path and Path(photo_target.photo_path).exists():
+        st.image(photo_target.photo_path, width=300, caption="現在登録されている写真")
+    else:
+        st.caption("この集合場所にはまだ写真がありません。")
+    uploaded_mp_photo = st.file_uploader(
+        "写真をアップロード（差し替え）", type=["png", "jpg", "jpeg"], key="mp_photo_upload"
+    )
+    if uploaded_mp_photo is not None and st.button("この写真を保存", key="save_mp_photo"):
+        photo_path = save_meeting_point_photo(uploaded_mp_photo.getvalue(), photo_target.id)
+        db.upsert_meeting_point(
+            conn,
+            MeetingPoint(
+                id=photo_target.id, name=photo_target.name,
+                en_text=photo_target.en_text, jp_text=photo_target.jp_text, photo_path=photo_path,
+            ),
+        )
+        st.success("写真を保存しました。")
+        st.rerun()
+
+st.divider()
+
+# --- 過去のBooking Confirmationからの取込 -------------------------------------
+st.header("過去のBooking Confirmationから集合場所・Inclusions/Exclusionsを取り込む")
+st.caption(
+    "作成済みのBooking Confirmation（PDF）をドラッグ＆ドロップすると、AIがツアー名・集合場所・"
+    "Inclusions/Exclusionsを読み取ります。埋め込まれている写真も取り込み候補として表示します。"
+)
+uploaded_confirmation_pdf = st.file_uploader(
+    "Booking Confirmation PDFをドラッグ＆ドロップ", type=["pdf"], key="import_confirmation_pdf"
+)
+
+if uploaded_confirmation_pdf is not None:
+    upload_signature = (uploaded_confirmation_pdf.name, uploaded_confirmation_pdf.size)
+    if st.session_state.get("_import_confirmation_signature") != upload_signature:
+        st.session_state["_import_confirmation_signature"] = upload_signature
+        reader = PdfReader(uploaded_confirmation_pdf)
+        pdf_text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        candidate_images = sorted(
+            (img.data for page in reader.pages for img in page.images),
+            key=len,
+            reverse=True,
+        )
+        st.session_state["_import_confirmation_photo"] = candidate_images[0] if candidate_images else None
+        try:
+            with st.spinner("AIで読み取り中..."):
+                st.session_state["_import_confirmation_result"] = extract_confirmation_document(pdf_text)
+        except ExtractionError as exc:
+            st.error(f"読み取りに失敗しました: {exc}")
+            st.session_state["_import_confirmation_result"] = None
+
+    confirmation_extracted = st.session_state.get("_import_confirmation_result")
+    if confirmation_extracted:
+        st.success(f"ツアー名「{confirmation_extracted.get('tour_name', '')}」を読み取りました。")
+        confirm_col1, confirm_col2 = st.columns(2)
+        with confirm_col1:
+            st.write("**集合場所**")
+            st.text(f"EN: {confirmation_extracted.get('meeting_point_en', '')}")
+            st.text(f"JP: {confirmation_extracted.get('meeting_point_jp', '')}")
+            photo_bytes = st.session_state.get("_import_confirmation_photo")
+            if photo_bytes:
+                st.image(photo_bytes, width=250, caption="取り込み候補の写真（最大サイズの埋め込み画像）")
+            else:
+                st.caption("このPDFからは画像を抽出できませんでした。")
+        with confirm_col2:
+            st.write("**Inclusions**")
+            st.write(confirmation_extracted.get("inclusions", []))
+            st.write("**Exclusions**")
+            st.write(confirmation_extracted.get("exclusions", []))
+
+        import_mp_name = st.text_input(
+            "保存する集合場所名", value=confirmation_extracted.get("meeting_point_en", "") or "新しい集合場所",
+            key="import_mp_name",
+        )
+        if st.button("この集合場所として保存", type="primary", key="import_save_meeting_point"):
+            new_mp_id = db.upsert_meeting_point(
+                conn,
+                MeetingPoint(
+                    id=None, name=import_mp_name,
+                    en_text=confirmation_extracted.get("meeting_point_en", ""),
+                    jp_text=confirmation_extracted.get("meeting_point_jp", ""),
+                ),
+            )
+            photo_bytes = st.session_state.get("_import_confirmation_photo")
+            if photo_bytes:
+                photo_path = save_meeting_point_photo(photo_bytes, new_mp_id)
+                mp = next(mp for mp in db.list_meeting_points(conn) if mp.id == new_mp_id)
+                db.upsert_meeting_point(conn, MeetingPoint(id=mp.id, name=mp.name, en_text=mp.en_text, jp_text=mp.jp_text, photo_path=photo_path))
+            st.success(f"「{import_mp_name}」として集合場所を保存しました。")
+            st.rerun()
+
+        import_tour_name_for_incl = st.text_input(
+            "Inclusions/Exclusionsを反映するツアー名",
+            value=confirmation_extracted.get("tour_name", ""),
+            key="import_confirmation_tour_name",
+        )
+        if st.button("このInclusions/Exclusionsをツアーマスタに反映", key="import_save_inclusions"):
+            matched_tour = next((t for t in db.list_tours(conn) if t.name == import_tour_name_for_incl), None)
+            if matched_tour is None:
+                st.error(f"「{import_tour_name_for_incl}」という名前のツアーが見つかりません。ツアーマスタで先に名前を確認してください。")
+            else:
+                db.upsert_tour(
+                    conn,
+                    Tour(
+                        id=matched_tour.id, name=matched_tour.name, area=matched_tour.area,
+                        category=matched_tour.category, default_stopover_count=matched_tour.default_stopover_count,
+                        meeting_point_en=matched_tour.meeting_point_en, meeting_point_jp=matched_tour.meeting_point_jp,
+                        inclusions=confirmation_extracted.get("inclusions", []) or matched_tour.inclusions,
+                        exclusions=confirmation_extracted.get("exclusions", []) or matched_tour.exclusions,
+                    ),
+                )
+                st.success(f"「{import_tour_name_for_incl}」のInclusions/Exclusionsを更新しました。")
 
 st.divider()
 
