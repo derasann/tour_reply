@@ -1,3 +1,0 @@
-libreoffice-calc
-libreoffice-impress
-fonts-noto-cjk

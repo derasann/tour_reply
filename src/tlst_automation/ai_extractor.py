@@ -180,3 +180,85 @@ def _with(booking: BookingRequest, **changes: object) -> BookingRequest:
     from dataclasses import replace
 
     return replace(booking, **changes)
+
+
+GUIDE_REQUEST_SYSTEM_PROMPT = """あなたは旅行会社のガイド依頼書（ガイドへの行程指示書）を読み取るアシスタントです。
+渡されたガイド依頼書のテキストから、ツアー名と行程表（時間・立ち寄り先・支払額・支払方法・
+立ち寄り先情報）を抽出してください。
+
+- 行程表の各行を順番どおりに全て拾うこと（集合・タクシー移動・解散なども1行として含める）。
+- unit_price は、その立ち寄り先で1人あるいは1台あたりの支払額が明確な単一の数値として
+  読み取れる場合のみ円単位の整数で入れること（例："@200円 × 1" なら 200、
+  "@570円 + @410円 + ガイド分" のように複数の金額が混在し単一の単価に定まらない場合は null）。
+- 抽出結果は必ず extract_guide_request ツールを呼び出して返すこと。文章での説明は不要。
+"""
+
+GUIDE_REQUEST_EXTRACTION_TOOL = {
+    "name": "extract_guide_request",
+    "description": "Structured itinerary data extracted from a guide-request document (ガイド依頼書).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tour_name": {"type": "string"},
+            "itinerary": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "time_label": {"type": "string"},
+                        "stopover_name": {"type": "string"},
+                        "payment_label": {"type": "string"},
+                        "payment_method": {"type": "string"},
+                        "stopover_info": {
+                            "type": "string",
+                            "description": "Address/phone of the stopover, if stated",
+                        },
+                        "unit_price": {
+                            "type": ["integer", "null"],
+                            "description": "Single clear per-item/per-person/per-vehicle price in yen, else null",
+                        },
+                    },
+                    "required": ["time_label", "stopover_name"],
+                },
+            },
+        },
+        "required": ["tour_name", "itinerary"],
+    },
+}
+
+
+def extract_guide_request_document(text: str, *, model: str = DEFAULT_MODEL) -> dict[str, object]:
+    """Parse a past ガイド依頼書 (guide request doc) into tour_name +
+    itinerary rows, for saving as a reusable itinerary variant / seeding
+    the stopover price master. Returns the raw tool_use input (dict with
+    "tour_name" and "itinerary" list of dicts including "unit_price").
+    """
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover
+        raise ExtractionError("anthropic package is not installed") from exc
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ExtractionError(
+            "ANTHROPIC_API_KEY is not set. Set it as an environment variable "
+            "or in .streamlit/secrets.toml before running extraction."
+        )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=4000,
+        system=GUIDE_REQUEST_SYSTEM_PROMPT,
+        tools=[GUIDE_REQUEST_EXTRACTION_TOOL],
+        tool_choice={"type": "tool", "name": "extract_guide_request"},
+        messages=[{"role": "user", "content": text}],
+    )
+
+    tool_use_block = next(
+        (block for block in response.content if block.type == "tool_use"), None
+    )
+    if tool_use_block is None:
+        raise ExtractionError("Claude did not return a tool_use block")
+
+    return tool_use_block.input

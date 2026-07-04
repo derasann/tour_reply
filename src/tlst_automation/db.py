@@ -1,9 +1,12 @@
-"""SQLite storage for bookings and master data (guides/agents/tours/stopovers).
+"""SQLite storage for reference master data only (guides/agents/tours/
+stopovers/itinerary variants).
 
-A single-file database is enough for the "self + a few internal staff" scale
-this portal targets. Nested structures (participants, itinerary rows,
-checklists, sales lines, feedback) are stored as JSON text columns and
-rebuilt into dataclasses on read.
+Deliberately does NOT store individual bookings: each booking's
+email-derived data (guest names, dietary/medical info, etc.) lives only
+in memory for the duration of one document-generation session and is
+never written here. The source email/PDF continues to be kept in Google
+Drive as before. This keeps the one persistent store limited to
+non-customer reference data (tariff/guide/agent/tour/stopover info).
 """
 
 from __future__ import annotations
@@ -14,15 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .master import Agent, Guide, Stopover, Tour
-from .models import (
-    BookingRequest,
-    ChecklistItem,
-    ItineraryStop,
-    ItineraryVariant,
-    Participant,
-    SalesLine,
-    TourFeedback,
-)
+from .models import ItineraryStop, ItineraryVariant
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "tours.db"
 
@@ -72,65 +67,6 @@ CREATE TABLE IF NOT EXISTS stopovers (
     notes TEXT DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS bookings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    booking_no TEXT DEFAULT '',
-    tour_date TEXT DEFAULT '',
-    tour_name TEXT DEFAULT '',
-    pax INTEGER DEFAULT 0,
-    participants TEXT DEFAULT '[]',
-    agent TEXT DEFAULT '',
-    agent_type TEXT DEFAULT 'AGT',
-    ref_no TEXT DEFAULT '',
-    tour_type TEXT DEFAULT 'G',
-    language TEXT DEFAULT 'EN',
-    dietary TEXT DEFAULT '',
-    medical TEXT DEFAULT '',
-    notes TEXT DEFAULT '',
-    start_time TEXT DEFAULT '',
-    end_time TEXT DEFAULT '',
-    amount INTEGER,
-    amount_formula TEXT DEFAULT '',
-    status TEXT DEFAULT '',
-    payment_status TEXT DEFAULT '',
-    assignee_1st TEXT DEFAULT '',
-    assignee_2nd TEXT DEFAULT '',
-    inquiry_date TEXT DEFAULT '',
-    agent_contact TEXT DEFAULT '',
-    notes_handover TEXT DEFAULT '',
-    guide_name TEXT DEFAULT 'TBA',
-    guide_mobile TEXT DEFAULT 'TBD',
-    guide_fee INTEGER,
-    guide_fee_auto_calc INTEGER DEFAULT 1,
-    guide_fee_shop_arrangement_bonus INTEGER DEFAULT 0,
-    guide_fee_adjustment INTEGER DEFAULT 0,
-    emergency_contact TEXT DEFAULT 'TBD',
-    meeting_point_en TEXT DEFAULT '',
-    meeting_point_jp TEXT DEFAULT '',
-    inclusions TEXT DEFAULT '[]',
-    exclusions TEXT DEFAULT '[]',
-    itinerary TEXT DEFAULT '[]',
-    checklist_pre TEXT DEFAULT '[]',
-    checklist_during TEXT DEFAULT '[]',
-    checklist_post TEXT DEFAULT '[]',
-    insurance_amount INTEGER,
-    sales_lines TEXT DEFAULT '[]',
-    feedback TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS generated_documents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    booking_id INTEGER NOT NULL REFERENCES bookings(id),
-    doc_type TEXT NOT NULL,
-    xlsx_path TEXT,
-    pptx_path TEXT,
-    pdf_path TEXT,
-    version INTEGER DEFAULT 1,
-    generated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS tour_itinerary_variants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tour_name TEXT NOT NULL,
@@ -152,167 +88,6 @@ def connect(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
     return conn
-
-
-# --- Booking <-> row conversion -------------------------------------------------
-
-def booking_to_row(booking: BookingRequest) -> dict[str, object]:
-    return {
-        "booking_no": booking.booking_no,
-        "tour_date": booking.tour_date,
-        "tour_name": booking.tour_name,
-        "pax": booking.pax,
-        "participants": json.dumps([asdict(p) for p in booking.participants]),
-        "agent": booking.agent,
-        "agent_type": booking.agent_type,
-        "ref_no": booking.ref_no,
-        "tour_type": booking.tour_type,
-        "language": booking.language,
-        "dietary": booking.dietary,
-        "medical": booking.medical,
-        "notes": booking.notes,
-        "start_time": booking.start_time,
-        "end_time": booking.end_time,
-        "amount": booking.amount,
-        "amount_formula": booking.amount_formula,
-        "status": booking.status,
-        "payment_status": booking.payment_status,
-        "assignee_1st": booking.assignee_1st,
-        "assignee_2nd": booking.assignee_2nd,
-        "inquiry_date": booking.inquiry_date,
-        "agent_contact": booking.agent_contact,
-        "notes_handover": booking.notes_handover,
-        "guide_name": booking.guide_name,
-        "guide_mobile": booking.guide_mobile,
-        "guide_fee": booking.guide_fee,
-        "guide_fee_auto_calc": int(booking.guide_fee_auto_calc),
-        "guide_fee_shop_arrangement_bonus": int(booking.guide_fee_shop_arrangement_bonus),
-        "guide_fee_adjustment": booking.guide_fee_adjustment,
-        "emergency_contact": booking.emergency_contact,
-        "meeting_point_en": booking.meeting_point_en,
-        "meeting_point_jp": booking.meeting_point_jp,
-        "inclusions": json.dumps(booking.inclusions),
-        "exclusions": json.dumps(booking.exclusions),
-        "itinerary": json.dumps([asdict(row) for row in booking.itinerary]),
-        "checklist_pre": json.dumps([asdict(row) for row in booking.checklist_pre]),
-        "checklist_during": json.dumps([asdict(row) for row in booking.checklist_during]),
-        "checklist_post": json.dumps([asdict(row) for row in booking.checklist_post]),
-        "insurance_amount": booking.insurance_amount,
-        "sales_lines": json.dumps([asdict(row) for row in booking.sales_lines]),
-        "feedback": json.dumps(asdict(booking.feedback)) if booking.feedback else None,
-    }
-
-
-def row_to_booking(row: sqlite3.Row) -> BookingRequest:
-    feedback_raw = row["feedback"]
-    return BookingRequest(
-        tour_date=row["tour_date"],
-        tour_name=row["tour_name"],
-        pax=row["pax"],
-        participants=[Participant(**p) for p in json.loads(row["participants"])],
-        agent=row["agent"],
-        agent_type=row["agent_type"],
-        ref_no=row["ref_no"],
-        tour_type=row["tour_type"],
-        language=row["language"],
-        dietary=row["dietary"],
-        medical=row["medical"],
-        notes=row["notes"],
-        start_time=row["start_time"],
-        end_time=row["end_time"],
-        amount=row["amount"],
-        amount_formula=row["amount_formula"],
-        booking_no=row["booking_no"],
-        status=row["status"],
-        payment_status=row["payment_status"],
-        assignee_1st=row["assignee_1st"],
-        assignee_2nd=row["assignee_2nd"],
-        inquiry_date=row["inquiry_date"],
-        agent_contact=row["agent_contact"],
-        notes_handover=row["notes_handover"],
-        guide_name=row["guide_name"],
-        guide_mobile=row["guide_mobile"],
-        guide_fee=row["guide_fee"],
-        guide_fee_auto_calc=bool(row["guide_fee_auto_calc"]),
-        guide_fee_shop_arrangement_bonus=bool(row["guide_fee_shop_arrangement_bonus"]),
-        guide_fee_adjustment=row["guide_fee_adjustment"],
-        emergency_contact=row["emergency_contact"],
-        meeting_point_en=row["meeting_point_en"],
-        meeting_point_jp=row["meeting_point_jp"],
-        inclusions=json.loads(row["inclusions"]),
-        exclusions=json.loads(row["exclusions"]),
-        itinerary=[ItineraryStop(**r) for r in json.loads(row["itinerary"])],
-        checklist_pre=[ChecklistItem(**r) for r in json.loads(row["checklist_pre"])],
-        checklist_during=[ChecklistItem(**r) for r in json.loads(row["checklist_during"])],
-        checklist_post=[ChecklistItem(**r) for r in json.loads(row["checklist_post"])],
-        insurance_amount=row["insurance_amount"],
-        sales_lines=[SalesLine(**r) for r in json.loads(row["sales_lines"])],
-        feedback=TourFeedback(**json.loads(feedback_raw)) if feedback_raw else None,
-    )
-
-
-def insert_booking(conn: sqlite3.Connection, booking: BookingRequest) -> int:
-    row = booking_to_row(booking)
-    columns = ", ".join(row.keys())
-    placeholders = ", ".join(f":{key}" for key in row.keys())
-    cursor = conn.execute(
-        f"INSERT INTO bookings ({columns}) VALUES ({placeholders})", row
-    )
-    conn.commit()
-    return cursor.lastrowid
-
-
-def update_booking(conn: sqlite3.Connection, booking_id: int, booking: BookingRequest) -> None:
-    row = booking_to_row(booking)
-    assignments = ", ".join(f"{key} = :{key}" for key in row.keys())
-    row["id"] = booking_id
-    conn.execute(
-        f"UPDATE bookings SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-        "WHERE id = :id",
-        row,
-    )
-    conn.commit()
-
-
-def get_booking(conn: sqlite3.Connection, booking_id: int) -> BookingRequest | None:
-    row = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
-    return row_to_booking(row) if row else None
-
-
-def list_bookings(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute(
-        "SELECT id, booking_no, tour_name, tour_date, pax, status, payment_status, "
-        "agent, guide_name FROM bookings ORDER BY tour_date DESC"
-    ).fetchall()
-
-
-def record_generated_document(
-    conn: sqlite3.Connection,
-    booking_id: int,
-    doc_type: str,
-    xlsx_path: str | None = None,
-    pptx_path: str | None = None,
-    pdf_path: str | None = None,
-) -> int:
-    cursor = conn.execute(
-        "INSERT INTO generated_documents (booking_id, doc_type, xlsx_path, pptx_path, pdf_path) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (booking_id, doc_type, xlsx_path, pptx_path, pdf_path),
-    )
-    conn.commit()
-    return cursor.lastrowid
-
-
-def latest_generated_documents(conn: sqlite3.Connection, booking_id: int) -> dict[str, sqlite3.Row]:
-    """Most recent row per doc_type for a booking (e.g. for re-showing downloads)."""
-    rows = conn.execute(
-        "SELECT * FROM generated_documents WHERE booking_id = ? ORDER BY generated_at DESC",
-        (booking_id,),
-    ).fetchall()
-    latest: dict[str, sqlite3.Row] = {}
-    for row in rows:
-        latest.setdefault(row["doc_type"], row)
-    return latest
 
 
 # --- Per-tour itinerary variants (for guide-request auto-fill) ---------------

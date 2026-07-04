@@ -7,19 +7,22 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from pypdf import PdfReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from portal_common import get_conn, require_login  # noqa: E402
+from portal_common import get_conn  # noqa: E402
 from tlst_automation import db  # noqa: E402
+from tlst_automation.ai_extractor import ExtractionError, extract_guide_request_document  # noqa: E402
 from tlst_automation.master import Agent, Guide, Stopover, Tour  # noqa: E402
+from tlst_automation.models import ItineraryStop  # noqa: E402
 
 st.set_page_config(page_title="マスタ管理 - ツアー予約割当ポータル", layout="wide")
-require_login()
 conn = get_conn()
 
 st.title("マスタ管理")
@@ -51,7 +54,7 @@ guides_df = pd.DataFrame(
 edited_guides = st.data_editor(
     guides_df,
     num_rows="dynamic",
-    use_container_width=True,
+    width="stretch",
     key="guides_editor",
     column_config={"id": st.column_config.NumberColumn("id", disabled=True)},
 )
@@ -101,7 +104,7 @@ agents_df = pd.DataFrame(
 edited_agents = st.data_editor(
     agents_df,
     num_rows="dynamic",
-    use_container_width=True,
+    width="stretch",
     key="agents_editor",
     column_config={
         "id": st.column_config.NumberColumn("id", disabled=True),
@@ -152,7 +155,7 @@ tours_df = pd.DataFrame(
 edited_tours = st.data_editor(
     tours_df,
     num_rows="dynamic",
-    use_container_width=True,
+    width="stretch",
     key="tours_editor",
     column_config={
         "id": st.column_config.NumberColumn("id", disabled=True),
@@ -205,7 +208,7 @@ stopovers_df = pd.DataFrame(
 edited_stopovers = st.data_editor(
     stopovers_df,
     num_rows="dynamic",
-    use_container_width=True,
+    width="stretch",
     key="stopovers_editor",
     column_config={"id": st.column_config.NumberColumn("id", disabled=True)},
 )
@@ -233,3 +236,88 @@ if st.button("立ち寄り先単価を保存", type="primary", key="save_stopove
             db.delete_stopover(conn, stopover.id)
     st.success("立ち寄り先単価を保存しました（値上げなどの反映は次回以降の書類生成から適用されます）。")
     st.rerun()
+
+st.divider()
+
+# --- 過去のガイド依頼書からの取込 ---------------------------------------------
+st.header("過去のガイド依頼書から行程・単価を取り込む")
+st.caption(
+    "作成済みのガイド依頼書（PDF）をドラッグ＆ドロップすると、AIがツアー名と行程表を読み取ります。"
+    "そのツアーの行程パターンとして保存したり、単価が明確な立ち寄り先だけ単価マスタに追加できます。"
+)
+uploaded_guide_pdf = st.file_uploader(
+    "ガイド依頼書PDFをドラッグ＆ドロップ", type=["pdf"], key="import_guide_pdf"
+)
+
+if uploaded_guide_pdf is not None:
+    upload_signature = (uploaded_guide_pdf.name, uploaded_guide_pdf.size)
+    if st.session_state.get("_import_guide_pdf_signature") != upload_signature:
+        st.session_state["_import_guide_pdf_signature"] = upload_signature
+        reader = PdfReader(uploaded_guide_pdf)
+        pdf_text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        try:
+            with st.spinner("AIで読み取り中..."):
+                st.session_state["_import_guide_pdf_result"] = extract_guide_request_document(pdf_text)
+        except ExtractionError as exc:
+            st.error(f"読み取りに失敗しました: {exc}")
+            st.session_state["_import_guide_pdf_result"] = None
+
+    extracted = st.session_state.get("_import_guide_pdf_result")
+    if extracted:
+        itinerary_rows = extracted.get("itinerary", [])
+        st.success(f"ツアー名「{extracted.get('tour_name', '')}」、行程{len(itinerary_rows)}件を読み取りました。")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "時間": row.get("time_label", ""),
+                        "立ち寄り先": row.get("stopover_name", ""),
+                        "支払額": row.get("payment_label", ""),
+                        "支払方法": row.get("payment_method", ""),
+                        "立ち寄り先情報": row.get("stopover_info", ""),
+                        "単価目安": row.get("unit_price"),
+                    }
+                    for row in itinerary_rows
+                ]
+            ),
+            width="stretch",
+        )
+
+        import_tour_name = st.text_input(
+            "保存先のツアー名", value=extracted.get("tour_name", ""), key="import_tour_name"
+        )
+        import_variant_label = st.text_input(
+            "行程パターン名", value=f"PDF取込 {date.today().isoformat()}", key="import_variant_label"
+        )
+
+        import_col1, import_col2 = st.columns(2)
+        with import_col1:
+            if st.button("行程パターンとして保存", type="primary", key="import_save_itinerary"):
+                stops = [
+                    ItineraryStop(
+                        time_label=row.get("time_label", ""),
+                        stopover_name=row.get("stopover_name", ""),
+                        payment_label=row.get("payment_label", ""),
+                        payment_method=row.get("payment_method", ""),
+                        stopover_info=row.get("stopover_info", ""),
+                    )
+                    for row in itinerary_rows
+                ]
+                db.save_tour_itinerary_variant(conn, import_tour_name, import_variant_label, stops)
+                st.success(f"「{import_tour_name}」の行程パターンとして保存しました。")
+        with import_col2:
+            if st.button("単価が明確な立ち寄り先を単価マスタに追加", key="import_save_stopovers"):
+                existing_names = {s.name for s in db.list_stopovers(conn)}
+                added = 0
+                for row in itinerary_rows:
+                    name = str(row.get("stopover_name", "")).strip()
+                    price = row.get("unit_price")
+                    if not name or price is None or name in existing_names:
+                        continue
+                    db.upsert_stopover(
+                        conn,
+                        Stopover(id=None, name=name, address=str(row.get("stopover_info", "")), unit_price=int(price)),
+                    )
+                    existing_names.add(name)
+                    added += 1
+                st.success(f"立ち寄り先単価に{added}件追加しました（単価が明確だった項目のみ、既存と同名のものはスキップ）。")

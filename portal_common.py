@@ -49,38 +49,6 @@ def ensure_api_key() -> None:
         os.environ["ANTHROPIC_API_KEY"] = st.secrets["anthropic_api_key"]
 
 
-def require_login() -> None:
-    """Gate the whole app behind one shared username/password.
-
-    Call this first thing on every page (after st.set_page_config). Only a
-    basic form-match check -- fine for "self + a few internal staff", not
-    meant as strong security (no rate limiting, no per-user accounts).
-    Credentials come from st.secrets (auth_username / auth_password), set
-    locally in .streamlit/secrets.toml (gitignored) and, when deployed, in
-    the Streamlit Cloud app's own Secrets settings -- never committed.
-    """
-    if st.session_state.get("authenticated"):
-        return
-
-    st.title("ツアー予約割当ポータル")
-    st.write("ログインしてください。")
-    with st.form("login_form"):
-        username = st.text_input("ユーザー名")
-        password = st.text_input("パスワード", type="password")
-        submitted = st.form_submit_button("ログイン", type="primary")
-
-    if submitted:
-        expected_user = st.secrets.get("auth_username", "")
-        expected_pass = st.secrets.get("auth_password", "")
-        if username == expected_user and password == expected_pass:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("ユーザー名またはパスワードが違います。")
-
-    st.stop()
-
-
 @st.cache_resource
 def get_conn():
     return db.connect()
@@ -334,7 +302,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     itinerary_df = st.data_editor(
         st.session_state[df_state_key],
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         key=f"{key_prefix}_itinerary_editor",
     )
 
@@ -418,17 +386,18 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     )
 
 
-def generate_and_persist(conn, updated: BookingRequest, booking_id: int | None) -> int:
-    """Insert/update the booking, generate the 3 documents + PDFs, and stash
-    the results in st.session_state so render_downloads() can show them
+def generate_documents(updated: BookingRequest) -> None:
+    """Generate the 3 documents + PDFs for this session only, and stash the
+    results in st.session_state so render_downloads() can show them
     persistently (including across reruns triggered by download clicks).
-    """
-    if booking_id is None:
-        booking_id = db.insert_booking(conn, updated)
-    else:
-        db.update_booking(conn, booking_id, updated)
 
-    out_dir = GENERATED_DIR / (updated.booking_no or f"booking_{booking_id}")
+    Deliberately stateless: nothing here is written to a database. This
+    tool only generates and hands off files -- the source email/PDF stays
+    in Google Drive as before, and this app never accumulates a history of
+    past bookings. Only reference master data (guides/agents/tours/
+    stopovers/itinerary variants) persists, via db.py.
+    """
+    out_dir = GENERATED_DIR / (updated.booking_no or "current")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with st.spinner("Excel/PowerPointを生成中..."):
@@ -448,63 +417,21 @@ def generate_and_persist(conn, updated: BookingRequest, booking_id: int | None) 
     except PdfExportError as exc:
         st.error(f"PDF書き出しに失敗しました: {exc}")
 
-    db.record_generated_document(
-        conn, booking_id, "internal_sheet", xlsx_path=str(workbook_path),
-        pdf_path=str(internal_pdf) if internal_pdf else None,
-    )
-    db.record_generated_document(
-        conn, booking_id, "booking_confirmation", xlsx_path=str(workbook_path),
-        pdf_path=str(confirmation_pdf) if confirmation_pdf else None,
-    )
-    db.record_generated_document(
-        conn, booking_id, "guide_request", pptx_path=str(pptx_path),
-        pdf_path=str(guide_pdf) if guide_pdf else None,
-    )
-
     st.session_state["last_generated"] = {
         "booking_no": updated.booking_no,
         "tour_date": updated.tour_date,
         "tour_name": updated.tour_name,
         "guide_name": updated.guide_name,
-        "booking_id": booking_id,
         "workbook_path": str(workbook_path),
         "pptx_path": str(pptx_path),
         "internal_pdf": str(internal_pdf) if internal_pdf else None,
         "confirmation_pdf": str(confirmation_pdf) if confirmation_pdf else None,
         "guide_pdf": str(guide_pdf) if guide_pdf else None,
     }
-    return booking_id
-
-
-def load_last_generated_from_db(conn, booking_id: int, booking: BookingRequest) -> None:
-    """Hydrate st.session_state['last_generated'] from previously recorded
-    documents, so revisiting a booking shows its downloads immediately
-    without needing to regenerate first."""
-    current = st.session_state.get("last_generated")
-    if current and current.get("booking_id") == booking_id:
-        return
-    docs = db.latest_generated_documents(conn, booking_id)
-    if not docs:
-        return
-    internal = docs.get("internal_sheet")
-    confirmation = docs.get("booking_confirmation")
-    guide = docs.get("guide_request")
-    st.session_state["last_generated"] = {
-        "booking_no": booking.booking_no,
-        "tour_date": booking.tour_date,
-        "tour_name": booking.tour_name,
-        "guide_name": booking.guide_name,
-        "booking_id": booking_id,
-        "workbook_path": (internal["xlsx_path"] if internal else None) or (confirmation["xlsx_path"] if confirmation else None),
-        "pptx_path": guide["pptx_path"] if guide else None,
-        "internal_pdf": internal["pdf_path"] if internal else None,
-        "confirmation_pdf": confirmation["pdf_path"] if confirmation else None,
-        "guide_pdf": guide["pdf_path"] if guide else None,
-    }
 
 
 def _booking_out_dir(generated: dict) -> Path:
-    out_dir = GENERATED_DIR / (generated["booking_no"] or f"booking_{generated['booking_id']}")
+    out_dir = GENERATED_DIR / (generated["booking_no"] or "current")
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
 
@@ -519,7 +446,7 @@ def render_downloads() -> None:
     tour_name = generated["tour_name"]
     guide_name = generated["guide_name"]
 
-    st.header(f"ダウンロード（予約番号: {booking_no or generated['booking_id']}）")
+    st.header(f"ダウンロード（予約番号: {booking_no or '(未設定)'}）")
     dl1, dl2 = st.columns(2)
     with dl1:
         st.write("**社内共有シート＋Booking Confirmation（編集用原本）**")

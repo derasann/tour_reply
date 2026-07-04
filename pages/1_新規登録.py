@@ -12,16 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from portal_common import (  # noqa: E402
     ensure_api_key,
     extract_text_from_upload,
-    generate_and_persist,
+    generate_documents,
     get_conn,
     render_booking_form,
     render_downloads,
-    require_login,
 )
 from tlst_automation.ai_extractor import ExtractionError, extract_booking_request  # noqa: E402
 
 st.set_page_config(page_title="新規登録 - ツアー予約割当ポータル", layout="wide")
-require_login()
 ensure_api_key()
 conn = get_conn()
 
@@ -74,7 +72,7 @@ if booking is not None:
     updated = render_booking_form(conn, booking, key_prefix="new")
 
     if st.button("書類を生成する", type="primary", key="new_generate"):
-        generate_and_persist(conn, updated, booking_id=None)
+        generate_documents(updated)
 
 st.divider()
 render_downloads()
