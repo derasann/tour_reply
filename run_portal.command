@@ -1,5 +1,7 @@
 #!/bin/zsh
-cd "$(dirname "$0")"
+# デスクトップなど別の場所に置いてもプロジェクト本体を見つけられるよう、
+# $0 の場所ではなく実際のプロジェクトパスを直接指定しています。
+cd "/Users/onoderakyoko/TLST_kaihatsu/tour_reply"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 が見つかりません。先に Python 3 をインストールしてください。"
