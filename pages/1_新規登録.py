@@ -10,8 +10,8 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from portal_common import (  # noqa: E402
+    combine_uploaded_texts,
     ensure_api_key,
-    extract_text_from_upload,
     generate_documents,
     get_conn,
     render_booking_form,
@@ -35,18 +35,17 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 st.caption(
-    "複数のPDFをまとめて渡した場合、現時点では時系列に連結してAIに渡します"
-    "（やり取りの中から最新の情報を自動で整理する機能は次の実装で対応します）。"
+    "複数のPDFをまとめて渡した場合、本文中の日付を見て時系列（古い→新しい）に並べ替えてから"
+    "AIに渡します。日付が見つからないファイルは末尾に追加されます。"
+    "AI自身にも「内容が矛盾する場合は日時から見て最新の情報を優先する」よう指示しています"
+    "（完全な保証ではないので、抽出結果は必ず確認してください）。"
 )
 
 if uploaded_files:
     upload_signature = tuple((f.name, f.size) for f in uploaded_files)
     if st.session_state.get("_upload_signature") != upload_signature:
         st.session_state["_upload_signature"] = upload_signature
-        parts = [
-            f"----- {f.name} -----\n{extract_text_from_upload(f)}" for f in uploaded_files
-        ]
-        st.session_state["email_text"] = "\n\n".join(parts)
+        st.session_state["email_text"] = combine_uploaded_texts(uploaded_files)
 
 email_text = st.text_area(
     "抽出されたテキスト（内容を確認・手直しできます。直接貼り付けも可）",

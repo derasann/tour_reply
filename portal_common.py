@@ -6,6 +6,7 @@ not a reusable library module.
 
 from __future__ import annotations
 
+import datetime as _dt
 import os
 import re
 import sys
@@ -59,6 +60,67 @@ def extract_text_from_upload(uploaded_file) -> str:
         reader = PdfReader(uploaded_file)
         return "\n\n".join(page.extract_text() or "" for page in reader.pages)
     return uploaded_file.read().decode("utf-8", errors="replace")
+
+
+_MONTH_NAMES = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8,
+    "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+_DATE_PATTERNS = [
+    re.compile(r"(?P<y>20\d{2})\s*年\s*(?P<m>\d{1,2})\s*月\s*(?P<d>\d{1,2})\s*日"),
+    re.compile(r"(?P<y>20\d{2})[/-](?P<m>\d{1,2})[/-](?P<d>\d{1,2})"),
+    re.compile(r"(?P<d>\d{1,2})\s+(?P<mon>[A-Za-z]+)\s+(?P<y>20\d{2})"),
+    re.compile(r"(?P<mon>[A-Za-z]+)\s+(?P<d>\d{1,2}),?\s+(?P<y>20\d{2})"),
+]
+
+
+def _extract_likely_datetime(text: str) -> _dt.datetime | None:
+    """Best-effort: find the email/correspondence date near the top of the
+    text (Gmail PDF exports show sender + date right after the headers).
+    Used only to order multiple uploaded threads chronologically before
+    handing them to the AI -- not a guarantee, just a best-effort nudge
+    (the AI is also told to resolve conflicts by recency; see
+    ai_extractor.py).
+    """
+    head = text[:1500]
+    for pattern in _DATE_PATTERNS:
+        match = pattern.search(head)
+        if not match:
+            continue
+        groups = match.groupdict()
+        try:
+            year = int(groups["y"])
+            day = int(groups["d"])
+            if groups.get("mon"):
+                month = _MONTH_NAMES.get(groups["mon"].lower())
+                if month is None:
+                    continue
+            else:
+                month = int(groups["m"])
+            return _dt.datetime(year, month, day)
+        except (ValueError, KeyError):
+            continue
+    return None
+
+
+def combine_uploaded_texts(uploaded_files) -> str:
+    """Order uploaded email threads by their best-effort detected date
+    (oldest first) before concatenating, so later corrections/updates end
+    up later in the combined text. Files where no date could be detected
+    are appended at the end, in their original upload order.
+    """
+    parts = []
+    for index, uploaded_file in enumerate(uploaded_files):
+        text = extract_text_from_upload(uploaded_file)
+        detected = _extract_likely_datetime(text)
+        parts.append((detected, index, uploaded_file.name, text))
+
+    parts.sort(key=lambda item: (item[0] is None, item[0] or _dt.datetime.min, item[1]))
+
+    return "\n\n".join(f"----- {name} -----\n{text}" for _, _, name, text in parts)
 
 
 def itinerary_to_df(stops: list[ItineraryStop]) -> pd.DataFrame:
