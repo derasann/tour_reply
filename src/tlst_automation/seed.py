@@ -18,6 +18,7 @@ from . import db
 from .master import Agent, Guide, MeetingPoint, Stopover, Tour
 from .models import ItineraryStop
 from .pricing import AGT_NET_PRICES, EXO_GROSS_PRICES
+from .rules import tour_names_match
 
 # area, tour name, guide, agent company -- from Sheet2 of 0625Hungry.xlsx
 AREA_TOUR_GUIDE_AGENT = [
@@ -289,26 +290,14 @@ TARIFF_INCLUSIONS_EXCLUSIONS = [
     ),
 ]
 
-def _normalize_tour_name(name: str) -> str:
-    name = name.lower()
-    name = re.sub(r"[’'“”\"]", "", name)
-    name = re.sub(r"[\-–—]", " ", name)
-    name = re.sub(r"[()（）]", " ", name)
-    name = re.sub(r"\s+", " ", name).strip()
-    return name
-
-
 def _matching_tour_names(tariff_title: str, existing_names: set[str]) -> list[str]:
     """Tariff PDF titles have OCR-ish glitches and existing tour names have
     their own spelling variants (seeded from several sources), so match by
-    normalized substring rather than requiring an exact string match."""
-    normalized_title = _normalize_tour_name(tariff_title)
+    normalized substring (rules.tour_names_match) rather than requiring an
+    exact string match."""
     matches = []
     for name in existing_names:
-        normalized_name = _normalize_tour_name(name)
-        if len(normalized_title) < 8 or len(normalized_name) < 8:
-            continue
-        if normalized_title in normalized_name or normalized_name in normalized_title:
+        if tour_names_match(tariff_title, name):
             matches.append(name)
     return matches
 

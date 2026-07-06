@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 import jpholiday
@@ -26,6 +27,47 @@ import jpholiday
 from .models import TBA, TBD
 
 BAR_HOP_KEYWORDS = ("bar hop", "izakaya", "yokocho", "snack bar")
+
+
+def normalize_tour_name(name: str) -> str:
+    """Loose key for matching tour names across sources (tariff PDF, AI
+    extraction from emails/guide-requests, hand-typed master data) that
+    don't always agree character-for-character (spacing, dashes, curly vs
+    straight quotes, parenthetical notes)."""
+    name = name.lower()
+    name = re.sub(r"[’'“”\"]", "", name)
+    name = re.sub(r"[\-–—]", " ", name)
+    name = re.sub(r"[()（）]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def tour_names_match(a: str, b: str) -> bool:
+    """True if two tour names likely refer to the same tour, tolerating the
+    spelling/formatting drift described in normalize_tour_name() plus a
+    single inserted/dropped/glued word (e.g. AI extraction from a guide
+    request adding "izakaya" that a booking email's extraction omits).
+
+    Two checks, either is enough:
+    - normalized character substring (catches glued-prefix PDF text
+      artifacts like "BaNightlife..." containing "Nightlife...")
+    - word-set symmetric difference of at most 1 (catches a whole extra
+      word inserted anywhere, which breaks substring matching)
+    Requires at least 8 normalized characters / 2 words so short generic
+    names don't false-positive against each other, and caps the word-set
+    check at a 1-word difference so genuinely different tours that merely
+    share most of their name (e.g. two different "...Hopping in Sendai"
+    tours) aren't merged.
+    """
+    norm_a, norm_b = normalize_tour_name(a), normalize_tour_name(b)
+    if not norm_a or not norm_b:
+        return False
+    if len(norm_a) >= 8 and len(norm_b) >= 8 and (norm_a in norm_b or norm_b in norm_a):
+        return True
+    tokens_a, tokens_b = set(norm_a.split()), set(norm_b.split())
+    if len(tokens_a) < 2 or len(tokens_b) < 2:
+        return False
+    return len(tokens_a ^ tokens_b) <= 1
 
 GUIDE_DRINK_PRICE = 750
 PER_SHOP_FOOD_PRICE = 3000

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .master import Agent, Guide, MeetingPoint, Stopover, Tour
 from .models import ItineraryStop, ItineraryVariant
+from .rules import tour_names_match
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "tours.db"
 
@@ -115,11 +116,19 @@ def _row_to_itinerary_variant(row: sqlite3.Row) -> ItineraryVariant:
 
 
 def list_tour_itinerary_variants(conn: sqlite3.Connection, tour_name: str) -> list[ItineraryVariant]:
+    """Fuzzy-matched by tour name (see rules.tour_names_match): itinerary
+    variants may have been saved from a guide-request PDF's own wording of
+    the tour name, which doesn't always match character-for-character what
+    a booking email's AI extraction produces later.
+    """
     rows = conn.execute(
-        "SELECT * FROM tour_itinerary_variants WHERE tour_name = ? ORDER BY created_at DESC",
-        (tour_name,),
+        "SELECT * FROM tour_itinerary_variants ORDER BY created_at DESC"
     ).fetchall()
-    return [_row_to_itinerary_variant(row) for row in rows]
+    return [
+        _row_to_itinerary_variant(row)
+        for row in rows
+        if tour_names_match(row["tour_name"], tour_name)
+    ]
 
 
 def save_tour_itinerary_variant(
