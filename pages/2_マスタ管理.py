@@ -47,13 +47,13 @@ guides = db.list_guides(conn)
 guides_df = pd.DataFrame(
     [
         {
-            "id": g.id, "name": g.name, "name_romaji": g.name_romaji, "phone": g.phone,
+            "id": g.id, "name": g.name, "name_romaji": g.name_romaji, "nickname": g.nickname, "phone": g.phone,
             "mobile": g.mobile, "email": g.email, "area": g.area,
             "default_fee": g.default_fee, "active_tours": _join_list(g.active_tours), "notes": g.notes,
         }
         for g in guides
     ],
-    columns=["id", "name", "name_romaji", "phone", "mobile", "email", "area", "default_fee", "active_tours", "notes"],
+    columns=["id", "name", "name_romaji", "nickname", "phone", "mobile", "email", "area", "default_fee", "active_tours", "notes"],
 )
 edited_guides = st.data_editor(
     guides_df,
@@ -74,6 +74,7 @@ if st.button("ガイドを保存", type="primary", key="save_guides"):
                 id=row_id,
                 name=row.get("name") or "",
                 name_romaji=row.get("name_romaji") or "",
+                nickname=row.get("nickname") or "",
                 phone=row.get("phone") or "",
                 mobile=row.get("mobile") or "",
                 email=row.get("email") or "",

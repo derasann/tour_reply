@@ -234,7 +234,9 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         st.session_state[tour_master_last_key] = booking.tour_name
     if st.session_state[tour_master_last_key] != tour_name:
         st.session_state[tour_master_last_key] = tour_name
-        matched_tour = next((t for t in db.list_tours(conn) if t.name == tour_name), None)
+        matched_tour = next(
+            (t for t in db.list_tours(conn) if tour_name and rules.tour_names_match(t.name, tour_name)), None
+        )
         if matched_tour:
             st.session_state[f"{key_prefix}_mp_en"] = matched_tour.meeting_point_en or booking.meeting_point_en
             st.session_state[f"{key_prefix}_mp_jp"] = matched_tour.meeting_point_jp or booking.meeting_point_jp
@@ -262,13 +264,16 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         )
 
         if st.session_state[guide_last_key] != guide_choice:
-            # User just picked a different guide -- pull their mobile from
-            # the guide master instead of leaving the previous guide's
-            # values sitting in the form.
+            # User just picked a different guide -- pull their contact info
+            # from the guide master instead of leaving the previous
+            # guide's values sitting in the form.
             st.session_state[guide_last_key] = guide_choice
             selected_guide = next((g for g in guides if g.name == guide_choice), None)
-            st.session_state[f"{key_prefix}_guide_mobile"] = (selected_guide.mobile if selected_guide else "") or tbd(None)
+            guide_contact = (selected_guide.mobile or selected_guide.phone) if selected_guide else ""
+            st.session_state[f"{key_prefix}_guide_mobile"] = guide_contact or tbd(None)
             st.session_state[f"{key_prefix}_guide_fee_manual_base"] = (selected_guide.default_fee if selected_guide else None) or 0
+            emergency_name = (selected_guide.nickname or selected_guide.name) if selected_guide else ""
+            st.session_state[f"{key_prefix}_emergency_contact"] = rules.format_guide_emergency_contact(emergency_name)
 
         guide_mobile = st.text_input("ガイド携帯", value=booking.guide_mobile, key=f"{key_prefix}_guide_mobile")
 
@@ -313,6 +318,28 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
 
         emergency_contact = st.text_input("緊急連絡先", value=booking.emergency_contact, key=f"{key_prefix}_emergency_contact")
     with col2:
+        all_tours = db.list_tours(conn)
+        if all_tours:
+            default_tour_pick = next(
+                (t.name for t in all_tours if tour_name and rules.tour_names_match(t.name, tour_name)),
+                all_tours[0].name,
+            )
+            tour_pick_names = [t.name for t in all_tours]
+            picked_tour_name = st.selectbox(
+                "タリフからInclusions/Exclusions・集合場所を反映するツアーを選択（自動反映されない場合の手動用）",
+                tour_pick_names,
+                index=tour_pick_names.index(default_tour_pick),
+                key=f"{key_prefix}_tour_master_picker",
+            )
+            if st.button("反映する", key=f"{key_prefix}_apply_tour_master"):
+                picked_tour = next(t for t in all_tours if t.name == picked_tour_name)
+                st.session_state[f"{key_prefix}_inclusions"] = "\n".join(picked_tour.inclusions)
+                st.session_state[f"{key_prefix}_exclusions"] = "\n".join(picked_tour.exclusions)
+                if picked_tour.meeting_point_en:
+                    st.session_state[f"{key_prefix}_mp_en"] = picked_tour.meeting_point_en
+                if picked_tour.meeting_point_jp:
+                    st.session_state[f"{key_prefix}_mp_jp"] = picked_tour.meeting_point_jp
+
         meeting_points = db.list_meeting_points(conn)
         mp_choice_names = ["(カスタム入力)"] + [mp.name for mp in meeting_points]
         mp_last_key = f"{key_prefix}_meeting_point_last"
@@ -558,6 +585,25 @@ def save_meeting_point_photo(image_bytes: bytes, meeting_point_id: int) -> str:
     return str(photo_path)
 
 
+def _render_pdf_preview(pdf_path: str | Path, label: str) -> None:
+    """Rough page-1 preview so staff can sanity-check a document without
+    downloading it first. Renders locally via PyMuPDF -- nothing is sent
+    anywhere."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return
+    try:
+        doc = fitz.open(pdf_path)
+        pix = doc.load_page(0).get_pixmap(matrix=fitz.Matrix(1.3, 1.3))
+        image_bytes = pix.tobytes("png")
+        doc.close()
+    except Exception:
+        return
+    with st.expander(f"{label}のプレビュー（1ページ目、簡易表示）"):
+        st.image(image_bytes, width=500)
+
+
 def render_downloads() -> None:
     generated = st.session_state.get("last_generated")
     if not generated:
@@ -580,10 +626,12 @@ def render_downloads() -> None:
             p = Path(generated["internal_pdf"])
             name = internal_sheet_filename(booking_no, tour_date, tour_name, "pdf")
             st.download_button("社内共有シートPDF", p.read_bytes(), file_name=name, key="dl_internal_pdf")
+            _render_pdf_preview(p, "社内共有シート")
         if generated["confirmation_pdf"] and Path(generated["confirmation_pdf"]).exists():
             p = Path(generated["confirmation_pdf"])
             name = confirmation_filename(booking_no, tour_date, tour_name, "pdf")
             st.download_button("Booking Confirmation PDF", p.read_bytes(), file_name=name, key="dl_confirmation_pdf")
+            _render_pdf_preview(p, "Booking Confirmation")
 
         st.caption("Excelをデスクトップで手直しした場合は、ここに再アップロードするとそのファイルからPDFを作り直せます。")
         uploaded_xlsx = st.file_uploader("修正済みExcelを再アップロード", type=["xlsx"], key="reupload_xlsx")
@@ -604,11 +652,13 @@ def render_downloads() -> None:
                     file_name=internal_sheet_filename(booking_no, tour_date, tour_name, "pdf"),
                     key="dl_internal_pdf_edited",
                 )
+                _render_pdf_preview(edited_internal_pdf, "社内共有シート（修正版）")
                 st.download_button(
                     "Booking Confirmation PDF（修正版）", edited_confirmation_pdf.read_bytes(),
                     file_name=confirmation_filename(booking_no, tour_date, tour_name, "pdf"),
                     key="dl_confirmation_pdf_edited",
                 )
+                _render_pdf_preview(edited_confirmation_pdf, "Booking Confirmation（修正版）")
             except PdfExportError as exc:
                 st.error(f"PDF変換に失敗しました: {exc}")
     with dl2:
@@ -621,6 +671,7 @@ def render_downloads() -> None:
             p = Path(generated["guide_pdf"])
             name = guide_request_filename(guide_name, tour_date, tour_name, "pdf")
             st.download_button("ガイド依頼書PDF", p.read_bytes(), file_name=name, key="dl_guide_pdf")
+            _render_pdf_preview(p, "ガイド依頼書")
 
         st.caption("PowerPointをデスクトップで手直しした場合は、ここに再アップロードするとそのファイルからPDFを作り直せます。")
         uploaded_pptx = st.file_uploader("修正済みPowerPointを再アップロード", type=["pptx"], key="reupload_pptx")
@@ -636,5 +687,6 @@ def render_downloads() -> None:
                     file_name=guide_request_filename(guide_name, tour_date, tour_name, "pdf"),
                     key="dl_guide_pdf_edited",
                 )
+                _render_pdf_preview(edited_guide_pdf, "ガイド依頼書（修正版）")
             except PdfExportError as exc:
                 st.error(f"PDF変換に失敗しました: {exc}")

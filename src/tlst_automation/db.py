@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS guides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     name_romaji TEXT DEFAULT '',
+    nickname TEXT DEFAULT '',
     phone TEXT DEFAULT '',
     mobile TEXT DEFAULT '',
     email TEXT DEFAULT '',
@@ -86,6 +87,23 @@ CREATE TABLE IF NOT EXISTS meeting_points (
 """
 
 
+# Columns added after a table's first release. CREATE TABLE IF NOT EXISTS
+# above doesn't retrofit these onto an already-existing local tours.db, so
+# _migrate() adds them by hand -- this must never touch/rebuild existing
+# tables, just add the new column with its default.
+_COLUMN_MIGRATIONS = [
+    ("guides", "nickname", "TEXT DEFAULT ''"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, coltype in _COLUMN_MIGRATIONS:
+        existing_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+    conn.commit()
+
+
 def connect(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +114,7 @@ def connect(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -191,6 +210,7 @@ def list_guides(conn: sqlite3.Connection) -> list[Guide]:
             id=row["id"],
             name=row["name"],
             name_romaji=row["name_romaji"],
+            nickname=row["nickname"],
             phone=row["phone"],
             mobile=row["mobile"],
             email=row["email"],

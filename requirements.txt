@@ -10,3 +10,4 @@ reportlab
 anthropic
 jpholiday
 python-pptx
+pymupdf

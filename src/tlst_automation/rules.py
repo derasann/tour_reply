@@ -210,6 +210,20 @@ def compute_guide_base_fee(
     return amount, formula
 
 
+# Owner's own mobile is fixed on every guide request's emergency-contact
+# line (see reply.py's SIGNATURE for the same number); only the messenger
+# thread's guide nickname portion changes per booking. Real example:
+# "070-5327-0029(小野寺）＆ 【ちえさん】 TTC個別連絡メッセンジャースレッド"
+ONODERA_MOBILE = "070-5327-0029"
+
+
+def format_guide_emergency_contact(guide_nickname_or_name: str) -> str:
+    name = guide_nickname_or_name.strip() if guide_nickname_or_name else ""
+    if not name or name == TBA:
+        return tbd(None)
+    return f"{ONODERA_MOBILE}(小野寺）＆【{name}さん】TTC個別連絡メッセンジャースレッド"
+
+
 def format_dietary_for_confirmation(dietary_en: str) -> str:
     """Booking Confirmation must state dietary/allergy info precisely in English."""
     return dietary_en.strip() if dietary_en.strip() else "None declared"

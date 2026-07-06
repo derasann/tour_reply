@@ -16,6 +16,7 @@ class Guide:
     id: int | None
     name: str
     name_romaji: str = ""
+    nickname: str = ""  # casual first-name-ish form, e.g. "ちえ" for 玉田千恵 -- used in the emergency-contact messenger-thread wording
     phone: str = ""
     mobile: str = ""
     email: str = ""
