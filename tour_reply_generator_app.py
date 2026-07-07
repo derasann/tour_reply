@@ -4,24 +4,6 @@ st.set_page_config(page_title="Tour Reply Generator", layout="wide")
 
 st.title("🧭 TLST 返信文作成ツール")
 
-# --- 設定エリア ---
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    mode = st.selectbox("返信タイプ", ["AGT", "EXO", "BtoC"])
-
-with col2:
-    pax = st.number_input("人数", min_value=1, value=2)
-
-with col3:
-    if mode != "EXO":
-        type_ = st.selectbox("タイプ", ["G", "PV"])
-    else:
-        type_ = "G"
-
-with col4:
-    language = st.selectbox("言語", ["JP", "EN"])
-
 # --- ツアー一覧（AGT / BtoC 共通）税抜単価 ---
 tours = {
     # 仙台・宮城
@@ -274,57 +256,27 @@ hotels = {
     },
 }
 
-tour_list = exo_tours if mode == "EXO" else tours
 
-# ツアー名が長いため専用の全幅行に配置
-tour = st.selectbox(
-    "ツアーを選択",
-    list(tour_list.keys()),
-    format_func=lambda x: tour_list[x]["name"]
-)
-_supplier_title = tour_list[tour].get("supplier_title")
-if _supplier_title and _supplier_title != tour_list[tour]["name"]:
-    st.caption(f"社内タイトル（Supplier title）: {_supplier_title}")
-
-# --- 入力欄 ---
-st.subheader("📥 受信メール本文を貼り付け")
-email_text = st.text_area("メール内容", height=150, placeholder="Paste the received email here...")
-
-# --- ユーティリティ ---
-def extract_name(text):
-    import re
-    patterns = [
-        r"Dear\s+([A-Z][a-zA-Z\-]+)",
-        r"Hello\s+([A-Z][a-zA-Z\-]+)",
-        r"Hi\s+([A-Z][a-zA-Z\-]+)",
-        r"To:\s*([A-Z][a-zA-Z\-]+)"
-    ]
-    for p in patterns:
-        match = re.search(p, text)
-        if match:
-            return match.group(1)
-    return "[Customer Name]"
-
-# --- 生成ボタン ---
-if st.button("✉️ 返信文を生成"):
-    tour_data = tour_list[tour]
-    name = extract_name(email_text)
+# --- 料金計算ロジック（料金表・返信文作成ツールで共用） ---
+def calculate_price(mode, tour_data, pax, type_):
+    """Returns (total, formula_jp, formula_en, warning)"""
     base = tour_data.get("price", 0)
-    per_vehicle = tour_data.get("perVehicle", False)
-    per_group = tour_data.get("perGroup", False)
-    qty = 1 if (per_vehicle or per_group) else pax
+    warning = None
 
-    # --- 料金計算 ---
     if mode == "EXO":
+        per_vehicle = tour_data.get("perVehicle", False)
+        per_group = tour_data.get("perGroup", False)
+        qty = 1 if (per_vehicle or per_group) else pax
+
         price_table = tour_data.get("priceTable")
         single_pax_price = tour_data.get("singlePaxPrice")
         min_pax = tour_data.get("minPax")
         max_pax = tour_data.get("maxPax")
 
         if min_pax and pax < min_pax and not (single_pax_price and pax == 1):
-            st.warning(f"⚠️ このツアーの対応人数は{min_pax}〜{max_pax or '-'}名です。人数をご確認ください。")
+            warning = f"⚠️ このツアーの対応人数は{min_pax}〜{max_pax or '-'}名です。人数をご確認ください。"
         elif max_pax and pax > max_pax:
-            st.warning(f"⚠️ このツアーの対応人数は{min_pax or 1}〜{max_pax}名です。人数をご確認ください。")
+            warning = f"⚠️ このツアーの対応人数は{min_pax or 1}〜{max_pax}名です。人数をご確認ください。"
 
         if price_table:
             lookup_pax = min(pax, max(price_table.keys()))
@@ -360,6 +312,111 @@ if st.button("✉️ 返信文を生成"):
         pv_jp = " ＋ 10,000円（プライベート確約料）" if type_ == "PV" else ""
         formula_en = f"({base:,} yen × {pax} pax{pv_en}) × 1.1 tax = **{total_str} yen (tax included)**"
         formula_jp = f"（{base:,}円 × {pax}名{pv_jp}）× 消費税1.1 ＝ **{total_str}円（税込）**"
+
+    return total, formula_jp, formula_en, warning
+
+
+# ============================================================
+# 📊 TLST料金表（社内共有用・料金をすぐ確認できる早見表）
+# ============================================================
+st.header("📊 TLST料金表")
+st.caption("社内共有用の料金早見表です。プルダウンを選ぶとすぐ下に料金が表示されます。")
+
+pt_col1, pt_col2, pt_col3 = st.columns(3)
+
+with pt_col1:
+    pt_mode = st.selectbox("返信タイプ", ["AGT", "EXO", "BtoC"], key="pt_mode")
+
+with pt_col2:
+    pt_pax = st.number_input("人数", min_value=1, value=2, key="pt_pax")
+
+with pt_col3:
+    if pt_mode != "EXO":
+        pt_type = st.selectbox("タイプ", ["G", "PV"], key="pt_type")
+    else:
+        pt_type = "G"
+
+pt_tour_list = exo_tours if pt_mode == "EXO" else tours
+pt_tour = st.selectbox(
+    "ツアーを選択",
+    list(pt_tour_list.keys()),
+    format_func=lambda x: pt_tour_list[x]["name"],
+    key="pt_tour"
+)
+pt_tour_data = pt_tour_list[pt_tour]
+_pt_supplier_title = pt_tour_data.get("supplier_title")
+if _pt_supplier_title and _pt_supplier_title != pt_tour_data["name"]:
+    st.caption(f"社内タイトル（Supplier title）: {_pt_supplier_title}")
+
+pt_total, pt_formula_jp, pt_formula_en, pt_warning = calculate_price(pt_mode, pt_tour_data, pt_pax, pt_type)
+if pt_warning:
+    st.warning(pt_warning)
+st.info(f"💴 料金: {pt_formula_jp}")
+
+st.divider()
+
+# ============================================================
+# ✉️ 返信文作成ツール
+# ============================================================
+st.header("✉️ 返信文作成ツール")
+
+# --- 設定エリア ---
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    mode = st.selectbox("返信タイプ", ["AGT", "EXO", "BtoC"])
+
+with col2:
+    pax = st.number_input("人数", min_value=1, value=2)
+
+with col3:
+    if mode != "EXO":
+        type_ = st.selectbox("タイプ", ["G", "PV"])
+    else:
+        type_ = "G"
+
+with col4:
+    language = st.selectbox("言語", ["JP", "EN"])
+
+tour_list = exo_tours if mode == "EXO" else tours
+
+# ツアー名が長いため専用の全幅行に配置
+tour = st.selectbox(
+    "ツアーを選択",
+    list(tour_list.keys()),
+    format_func=lambda x: tour_list[x]["name"]
+)
+_supplier_title = tour_list[tour].get("supplier_title")
+if _supplier_title and _supplier_title != tour_list[tour]["name"]:
+    st.caption(f"社内タイトル（Supplier title）: {_supplier_title}")
+
+# --- 入力欄 ---
+st.subheader("📥 受信メール本文を貼り付け")
+email_text = st.text_area("メール内容", height=150, placeholder="Paste the received email here...")
+
+# --- ユーティリティ ---
+def extract_name(text):
+    import re
+    patterns = [
+        r"Dear\s+([A-Z][a-zA-Z\-]+)",
+        r"Hello\s+([A-Z][a-zA-Z\-]+)",
+        r"Hi\s+([A-Z][a-zA-Z\-]+)",
+        r"To:\s*([A-Z][a-zA-Z\-]+)"
+    ]
+    for p in patterns:
+        match = re.search(p, text)
+        if match:
+            return match.group(1)
+    return "[Customer Name]"
+
+# --- 生成ボタン ---
+if st.button("✉️ 返信文を生成"):
+    tour_data = tour_list[tour]
+    name = extract_name(email_text)
+
+    total, formula_jp, formula_en, warning = calculate_price(mode, tour_data, pax, type_)
+    if warning:
+        st.warning(warning)
 
     # --- 返信文生成 ---
     if mode == "BtoC":
@@ -443,9 +500,9 @@ http://www.tohoku-local-secret-tours.jp
         st.info(f"EXO料金（税込）: {formula_jp}")
     else:
         st.info(
-            f"税抜単価: {base:,}円 × {pax}名"
+            f"税抜単価: {tour_data.get('price', 0):,}円 × {pax}名"
             + (f" ＋ PV確約料 10,000円" if type_ == "PV" else "")
-            + f" → 税込合計: **{total_str}円**"
+            + f" → 税込合計: **{total:,}円**"
         )
 
 # --- 参考情報：貸切車両料金表 ---
