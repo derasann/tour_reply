@@ -5,7 +5,7 @@ st.set_page_config(page_title="Tour Reply Generator", layout="wide")
 st.title("🧭 TLST 返信文作成ツール")
 
 # --- 設定エリア ---
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     mode = st.selectbox("返信タイプ", ["AGT", "EXO", "BtoC"])
@@ -276,15 +276,15 @@ hotels = {
 
 tour_list = exo_tours if mode == "EXO" else tours
 
-with col5:
-    tour = st.selectbox(
-        "ツアーを選択",
-        list(tour_list.keys()),
-        format_func=lambda x: tour_list[x]["name"]
-    )
-    _supplier_title = tour_list[tour].get("supplier_title")
-    if _supplier_title and _supplier_title != tour_list[tour]["name"]:
-        st.caption(f"社内タイトル（Supplier title）: {_supplier_title}")
+# ツアー名が長いため専用の全幅行に配置
+tour = st.selectbox(
+    "ツアーを選択",
+    list(tour_list.keys()),
+    format_func=lambda x: tour_list[x]["name"]
+)
+_supplier_title = tour_list[tour].get("supplier_title")
+if _supplier_title and _supplier_title != tour_list[tour]["name"]:
+    st.caption(f"社内タイトル（Supplier title）: {_supplier_title}")
 
 # --- 入力欄 ---
 st.subheader("📥 受信メール本文を貼り付け")
