@@ -96,6 +96,7 @@ class BookingRequest:
     notes_handover: str = ""
 
     guide_name: str = TBA
+    guide_name_romaji: str = ""  # romaji form for the (English) Booking Confirmation; falls back to guide_name if blank
     guide_mobile: str = TBD
     guide_fee: int | None = None  # final total written to documents (base + adjustment)
     guide_fee_auto_calc: bool = True  # Miyagi-departure fee formula; off for Aomori/Yamagata etc.

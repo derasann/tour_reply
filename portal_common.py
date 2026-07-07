@@ -275,8 +275,16 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
             st.session_state[f"{key_prefix}_guide_fee_manual_base"] = (selected_guide.default_fee if selected_guide else None) or 0
             emergency_name = (selected_guide.nickname or selected_guide.name) if selected_guide else ""
             st.session_state[f"{key_prefix}_emergency_contact"] = rules.format_guide_emergency_contact(emergency_name)
+            st.session_state[f"{key_prefix}_guide_name_romaji"] = (
+                (selected_guide.name_romaji or selected_guide.name) if selected_guide else ""
+            )
 
         guide_mobile = st.text_input("ガイド携帯", value=booking.guide_mobile, key=f"{key_prefix}_guide_mobile")
+        guide_name_romaji = st.text_input(
+            "ガイド名（ローマ字。Booking Confirmationに使用。マスタの「name_romaji」欄が自動反映されます）",
+            value=booking.guide_name_romaji,
+            key=f"{key_prefix}_guide_name_romaji",
+        )
 
         st.caption("ガイド謝金")
         guide_fee_auto_calc = st.checkbox(
@@ -489,6 +497,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         payment_status=payment_status,
         assignee_1st=assignee_1st,
         guide_name=guide_choice if guide_choice != "(TBA)" else "TBA",
+        guide_name_romaji=guide_name_romaji,
         guide_mobile=guide_mobile,
         guide_fee=guide_fee or None,
         guide_fee_auto_calc=guide_fee_auto_calc,

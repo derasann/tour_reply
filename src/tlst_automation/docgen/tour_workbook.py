@@ -186,7 +186,7 @@ def _fill_sheet2(xml: str, booking: BookingRequest) -> str:
         except ValueError:
             pass
 
-    xml = xl.set_inline_string(xml, "E16", booking.guide_name)
+    xml = xl.set_inline_string(xml, "E16", booking.guide_name_romaji or booking.guide_name)
     xml = xl.set_inline_string(
         xml, "F16", f"Emargency Contact:{booking.emergency_contact}  (Mobile/WhatsAPP)"
     )
