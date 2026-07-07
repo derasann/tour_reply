@@ -16,6 +16,7 @@ going through openpyxl.
 
 from __future__ import annotations
 
+import re
 import shutil
 from datetime import date
 from pathlib import Path
@@ -196,16 +197,43 @@ def _fill_sheet2(xml: str, booking: BookingRequest) -> str:
     return xml
 
 
+INCLUSION_SLOT_COUNT = 5  # <a:t> runs 5..9 in drawing2.xml -- the fixed number of
+# "What's Included" lines the template's textbox has room for.
+
+_BULLET_PREFIX_RE = re.compile(r"^[\-・•*]\s*")
+
+
+def _strip_bullet(text: str) -> str:
+    """Drop any leading bullet ("-", "・", "•", "*") a source (e.g. a past
+    Confirmation PDF re-imported via AI) may already have baked in, so we
+    don't end up doubling it when we add our own prefix below."""
+    return _BULLET_PREFIX_RE.sub("", text.strip())
+
+
 def _fill_drawing2(xml: str, booking: BookingRequest) -> str:
     dietary = format_dietary_for_confirmation(booking.dietary)
     xml = xl.replace_drawing_text_run(xml, 1, dietary)
 
-    inclusion_lines = booking.inclusions[:5]
-    for offset, text in enumerate(inclusion_lines):
+    # Fixed number of template slots, but a tour's real inclusion list (from
+    # the Tour master / tariff) can be shorter or longer -- always overwrite
+    # every slot (blank if unused) so the template's sample text never
+    # survives, and fold any overflow into the last slot instead of
+    # silently dropping it.
+    inclusions = [_strip_bullet(item) for item in booking.inclusions if item.strip()]
+    if len(inclusions) > INCLUSION_SLOT_COUNT:
+        overflow = inclusions[INCLUSION_SLOT_COUNT - 1 :]
+        inclusions = inclusions[: INCLUSION_SLOT_COUNT - 1] + ["; ".join(overflow)]
+    lines = [f"-{item}" for item in inclusions]
+    lines += [""] * (INCLUSION_SLOT_COUNT - len(lines))
+    for offset, text in enumerate(lines):
         xml = xl.replace_drawing_text_run(xml, 5 + offset, text)
 
-    if booking.exclusions:
-        xml = xl.replace_drawing_text_run(xml, 12, booking.exclusions[0])
+    # Only one "NOT Included" slot exists in the template -- join every
+    # exclusion into it rather than showing just the first and dropping
+    # the rest (or leaving the old sample line if there are none).
+    exclusions = [_strip_bullet(item) for item in booking.exclusions if item.strip()]
+    exclusion_text = f"・{'; '.join(exclusions)}" if exclusions else ""
+    xml = xl.replace_drawing_text_run(xml, 12, exclusion_text)
 
     return xml
 
