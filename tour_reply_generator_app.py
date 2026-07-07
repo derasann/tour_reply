@@ -159,6 +159,119 @@ exo_tours = {
         "price": 30800,
         "perGroup": True
     },
+    # --- 青森・津軽エリア EXO専用ツアー／サービス ---
+    "nebuta_spirit_aomori": {
+        "name": "EXO Spirit of Aomori Festivals and Lanterns",  # EXO Title
+        "supplier_title": "津軽の魂「ねぶた祭り」の原点と現在を巡る",  # Supplier title
+        "price": 48000,  # 2名以上/人（税込・プライベート）
+        "singlePaxPrice": 88000,  # 1名の場合（例外対応）
+        "minPax": 2,  # 例外的に1名可
+        "maxPax": 6,
+        "startTime": "08:40（青森市内ホテル）",
+        "duration": "8.5時間",
+        "period": "通年（除外日：8/9-14、12/24-1/5）",
+        "priceValidity": "2026年6月1日〜2027年5月30日",
+    },
+    "audley_aomori_hirosaki_fd": {
+        "name": "Audley Aomori & Hirosaki Full Day Guided Tour",  # EXO Title（Supplier titleの記載なし）
+        # EXOネット合計・グループ料金（車両費8H＋入場料&ランチ3,820円×人数＋ガイド68,000円）
+        "priceTable": {1: 141820, 2: 145640, 3: 167460, 4: 179280, 5: 194900, 6: 194900},
+        "minPax": 1,
+        "maxPax": 6,
+        "startTime": "09:00（弘前または青森市内ホテル）",
+        "duration": "8時間",
+        "period": "通年（除外日：8/9-14、12/24-1/5）",
+        "priceValidity": "Till Dec 2026",
+    },
+    "aomori_half_day_guide": {
+        "name": "AOMORI HALF DAY GUIDE TOUR",  # EXO Title（Supplier titleの記載なし）
+        "price": 30000,  # 2名以上/人（税込）
+        "singlePaxPrice": 58000,  # 1名の場合（例外対応）
+        "minPax": 1,  # 例外的に1名可、通常2名〜
+        "maxPax": 7,
+        "startTime": "09:00",
+        "duration": "4時間（9:00-13:00）",
+        "period": "通年（除外日：8/9-14、12/24-1/5）",
+    },
+    "aomori_guide_assistant_mg": {
+        "name": "Aomori Guide Assistant / Meet & Greet",  # EXO Title
+        "supplier_title": "Aomori Guide Assistant",  # Supplier title
+        "price": 19800,  # グループ（税込）
+        "perGroup": True,
+        "minPax": 1,
+        "maxPax": 6,
+        "note": "新青森駅新幹線プラットフォームでお出迎え、ホテルまでチェックインサポート。2時間ガイド・ガイド改札入場料金・ガイド交通費込み",
+    },
+    "aomori_guide_half_day": {
+        "name": "Aomori Guide Half Day",  # EXO Title
+        "supplier_title": "Aomori Guide（半日）",  # Supplier title
+        "price": 35000,  # グループ（税込・ガイド交通費込、4時間まで）
+        "perGroup": True,
+        "minPax": 1,
+        "maxPax": 6,
+        "note": "半日（4時間まで）",
+    },
+    "aomori_guide_full_day": {
+        "name": "Aomori Guide Full Day",  # EXO Title
+        "supplier_title": "Aomori Guide（終日）",  # Supplier title
+        "price": 68000,  # グループ（税込・ガイド交通費込、8時間まで）
+        "perGroup": True,
+        "minPax": 1,
+        "maxPax": 6,
+        "note": "終日（8時間まで）",
+    },
+}
+
+# --- 参考情報：弘前・津軽エリア 貸切車両料金表（税込）---
+# 正式料金は発着場所・走行距離により都度確認が必要
+hirosaki_vehicle_rates = {
+    "小型車": {
+        "hours": {1: 8800, 2: 17600, 3: 26200, 4: 35000, 5: 43800, 6: 56000, 7: 61000, 8: 70000},
+        "extra_hour": 8800,
+    },
+    "ジャンボタクシー": {
+        "hours": {1: 13000, 2: 26000, 3: 39000, 4: 51800, 5: 64800, 6: 77800, 7: 80800, 8: 103600},
+        "extra_hour": 13000,
+    },
+    "アルファード": {
+        "hours": {1: 11000, 2: 22000, 3: 33000, 4: 44000, 5: 55000, 6: 66000, 7: 77000, 8: 88000},
+        "extra_hour": 11000,
+    },
+}
+
+# --- 参考情報：ホテル ---
+hotels = {
+    "blossom_hotel_hirosaki": {
+        "name": "Blossom Hotel Hirosaki",  # EXO Title / Supplier title 共通
+        "note": "さくら祭り・夏祭り期間限定営業",
+        "rooms": {
+            "Single（Standard Double）": {"price": 40000, "size": "17㎡"},
+            "Single（Deluxe Double）": {"price": 42000, "size": "18㎡"},
+            "Standard Twin": {"price": 60000, "size": "22.5㎡"},
+            "Deluxe Twin": {"price": 64000, "size": "29㎡"},
+            "Suite": {"price": 120000, "size": "35㎡", "maxPax": 3},
+        },
+        "breakfast": 2000,  # 円/人（税抜）
+        "operatingPeriods": {
+            "さくら期間": "4月12日〜5月5日",
+            "夏祭り期間": "8月1日〜8月8日",
+        },
+        "cancellationPolicy": {
+            "60日前まで": "無料",
+            "60〜14日前": "30%",
+            "13〜7日前": "40%",
+            "6〜2日前": "50%",
+            "前日・当日": "100%",
+        },
+        "cancellationNote": "EXOと弊社間は30日前確定が必要",
+        "pricing2027": {
+            "base": "基本料金から10%増",
+            "peakDates": "さらに10%増（合計20%増）：①8月2日・8月7日（ねぶた初日・最終日）②4月3週・4週の土曜日（満開想定）",
+        },
+        "breakfastNote": "和食のお弁当が部屋食でお部屋に運ばれる。繁忙期のため食事制限対応不可",
+        "childPolicy": "添い寝：未就学児6歳まで（朝食は大人と同額）。大人2名につき1名添い寝可",
+        "priceValidity": "2027年5月5日まで",
+    },
 }
 
 tour_list = exo_tours if mode == "EXO" else tours
@@ -169,6 +282,9 @@ with col5:
         list(tour_list.keys()),
         format_func=lambda x: tour_list[x]["name"]
     )
+    _supplier_title = tour_list[tour].get("supplier_title")
+    if _supplier_title and _supplier_title != tour_list[tour]["name"]:
+        st.caption(f"社内タイトル（Supplier title）: {_supplier_title}")
 
 # --- 入力欄 ---
 st.subheader("📥 受信メール本文を貼り付け")
@@ -200,19 +316,41 @@ if st.button("✉️ 返信文を生成"):
 
     # --- 料金計算 ---
     if mode == "EXO":
-        total = base * qty
-        total_str = f"{total:,}"
-        if per_vehicle:
-            unit_label = "vehicle"
-            unit_jp = "台"
-        elif per_group:
-            unit_label = "group"
-            unit_jp = "グループ"
+        price_table = tour_data.get("priceTable")
+        single_pax_price = tour_data.get("singlePaxPrice")
+        min_pax = tour_data.get("minPax")
+        max_pax = tour_data.get("maxPax")
+
+        if min_pax and pax < min_pax and not (single_pax_price and pax == 1):
+            st.warning(f"⚠️ このツアーの対応人数は{min_pax}〜{max_pax or '-'}名です。人数をご確認ください。")
+        elif max_pax and pax > max_pax:
+            st.warning(f"⚠️ このツアーの対応人数は{min_pax or 1}〜{max_pax}名です。人数をご確認ください。")
+
+        if price_table:
+            lookup_pax = min(pax, max(price_table.keys()))
+            total = price_table[lookup_pax]
+            total_str = f"{total:,}"
+            formula_en = f"EXO net group rate for {pax} pax = **{total_str} yen (tax included)**"
+            formula_jp = f"{pax}名時の EXOネット・グループ料金 ＝ **{total_str}円（税込）**"
+        elif single_pax_price and pax == 1:
+            total = single_pax_price
+            total_str = f"{total:,}"
+            formula_en = f"1 pax special rate = **{total_str} yen (tax included)**"
+            formula_jp = f"1名特別料金 ＝ **{total_str}円（税込）**"
         else:
-            unit_label = "pax"
-            unit_jp = "名"
-        formula_en = f"({base:,} yen × {qty} {unit_label}) = **{total_str} yen (tax included)**"
-        formula_jp = f"（{base:,}円 × {qty}{unit_jp}）＝ **{total_str}円（税込）**"
+            total = base * qty
+            total_str = f"{total:,}"
+            if per_vehicle:
+                unit_label = "vehicle"
+                unit_jp = "台"
+            elif per_group:
+                unit_label = "group"
+                unit_jp = "グループ"
+            else:
+                unit_label = "pax"
+                unit_jp = "名"
+            formula_en = f"({base:,} yen × {qty} {unit_label}) = **{total_str} yen (tax included)**"
+            formula_jp = f"（{base:,}円 × {qty}{unit_jp}）＝ **{total_str}円（税込）**"
     else:
         pv_add = 10000 if type_ == "PV" else 0
         subtotal = base * pax + pv_add
@@ -302,10 +440,48 @@ http://www.tohoku-local-secret-tours.jp
 
     st.subheader("💴 料金内訳")
     if mode == "EXO":
-        st.info(f"EXO料金（税込）: {base:,}円 × {qty} = **{total_str}円**")
+        st.info(f"EXO料金（税込）: {formula_jp}")
     else:
         st.info(
             f"税抜単価: {base:,}円 × {pax}名"
             + (f" ＋ PV確約料 10,000円" if type_ == "PV" else "")
             + f" → 税込合計: **{total_str}円**"
         )
+
+# --- 参考情報：貸切車両料金表 ---
+with st.expander("📎 参考情報：弘前・津軽エリア 貸切車両料金表（税込）"):
+    st.caption("正式料金は発着場所・走行距離により都度確認が必要です。")
+    for car_type, rates in hirosaki_vehicle_rates.items():
+        hours_str = " / ".join(
+            f"{h}H: {price:,}円" for h, price in rates["hours"].items()
+        )
+        st.markdown(f"**{car_type}**  \n{hours_str}  \n以降1時間ごと: {rates['extra_hour']:,}円")
+
+# --- 参考情報：ホテル ---
+with st.expander("📎 参考情報：ホテル"):
+    for hotel in hotels.values():
+        st.markdown(f"### {hotel['name']}")
+        st.caption(hotel["note"])
+
+        st.markdown("**客室料金（税抜・1室あたり）**")
+        for room_name, room in hotel["rooms"].items():
+            max_pax_str = f"・最大{room['maxPax']}名" if "maxPax" in room else ""
+            st.markdown(f"- {room_name}: {room['price']:,}円 / {room['size']}{max_pax_str}")
+        st.markdown(f"- 朝食: {hotel['breakfast']:,}円/人（税抜）")
+        st.caption(hotel["breakfastNote"])
+
+        st.markdown("**営業期間**")
+        for period_name, period in hotel["operatingPeriods"].items():
+            st.markdown(f"- {period_name}: {period}")
+
+        st.markdown("**キャンセルポリシー**")
+        for timing, rate in hotel["cancellationPolicy"].items():
+            st.markdown(f"- {timing}: {rate}")
+        st.caption(hotel["cancellationNote"])
+
+        st.markdown("**2027年以降の料金**")
+        st.markdown(f"- {hotel['pricing2027']['base']}")
+        st.markdown(f"- {hotel['pricing2027']['peakDates']}")
+
+        st.markdown(f"**子供ポリシー**: {hotel['childPolicy']}")
+        st.markdown(f"**料金有効期限**: {hotel['priceValidity']}")
