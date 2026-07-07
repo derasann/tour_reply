@@ -319,6 +319,27 @@ else:
 
 st.divider()
 
+# --- ツアー別レイアウト調整 ---------------------------------------------------
+st.header("ツアー別レイアウト調整（保存済みの手直し）")
+st.caption(
+    "新規登録画面の「修正済みExcelを再アップロード」から保存した、ツアーごとの色・罫線・列幅などの"
+    "手直しの一覧です（お客様データは含みません）。次回以降そのツアーを生成すると自動で反映されます。"
+)
+style_overrides = db.list_tour_style_overrides(conn)
+if not style_overrides:
+    st.caption("まだ保存されたレイアウト調整はありません。")
+else:
+    for row in style_overrides:
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.write(f"**{row['tour_name']}**　（最終更新: {row['updated_at']}）")
+        with col2:
+            if st.button("削除", key=f"delete_style_override_{row['id']}"):
+                db.delete_tour_style_override(conn, row["id"])
+                st.rerun()
+
+st.divider()
+
 # --- 過去のBooking Confirmationからの取込 -------------------------------------
 st.header("過去のBooking Confirmationから集合場所・Inclusions/Exclusionsを取り込む")
 st.caption(

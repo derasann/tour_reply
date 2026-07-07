@@ -28,6 +28,7 @@ from tlst_automation.docgen.pdf_export import (  # noqa: E402
     export_workbook_sheet_pdf,
 )
 from tlst_automation.docgen.tour_workbook import generate_tour_workbook  # noqa: E402
+from tlst_automation.docgen import style_override  # noqa: E402
 from tlst_automation.models import (  # noqa: E402
     BookingRequest,
     ChecklistItem,
@@ -533,8 +534,13 @@ def generate_documents(conn, updated: BookingRequest) -> None:
         workbook_path = generate_tour_workbook(
             updated, out_dir / "tour_workbook.xlsx", meeting_point_photo_path=meeting_point_photo_path
         )
+        saved_style_diff = db.get_tour_style_override(conn, updated.tour_name)
+        if saved_style_diff:
+            style_override.apply_style_diff(workbook_path, saved_style_diff)
         pptx_path = generate_guide_request(updated, out_dir / "guide_request.pptx")
     st.success("Excel/PowerPointを生成しました。")
+    if saved_style_diff:
+        st.caption("このツアー用に保存済みのレイアウト調整を反映しました。")
 
     internal_pdf = confirmation_pdf = guide_pdf = None
     try:
@@ -661,6 +667,22 @@ def render_downloads() -> None:
                 _render_pdf_preview(edited_confirmation_pdf, "Booking Confirmation（修正版）")
             except PdfExportError as exc:
                 st.error(f"PDF変換に失敗しました: {exc}")
+
+            st.caption(
+                f"この修正内容（色・罫線・列幅など。お客様データは含みません）を「{tour_name}」用として保存すると、"
+                "次回以降このツアーを生成したときに自動で反映されます。"
+            )
+            if st.button("このレイアウト調整を今後の生成に自動反映する", key="save_style_override"):
+                try:
+                    resolved_diff = style_override.capture_and_resolve(edited_path)
+                    if resolved_diff.get("sheets"):
+                        conn = get_conn()
+                        db.save_tour_style_override(conn, tour_name, resolved_diff)
+                        st.success(f"「{tour_name}」のレイアウト調整を保存しました。")
+                    else:
+                        st.info("共通テンプレートとの差分が見つからなかったため、保存する内容がありませんでした。")
+                except Exception as exc:
+                    st.error(f"レイアウト調整の保存に失敗しました: {exc}")
     with dl2:
         st.write("**ガイド依頼書（編集用原本）**")
         if generated["pptx_path"] and Path(generated["pptx_path"]).exists():

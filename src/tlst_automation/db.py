@@ -84,6 +84,13 @@ CREATE TABLE IF NOT EXISTS meeting_points (
     jp_text TEXT DEFAULT '',
     photo_path TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS tour_style_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tour_name TEXT NOT NULL,
+    style_diff TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -352,4 +359,53 @@ def list_meeting_points(conn: sqlite3.Connection) -> list[MeetingPoint]:
 
 def delete_meeting_point(conn: sqlite3.Connection, meeting_point_id: int) -> None:
     conn.execute("DELETE FROM meeting_points WHERE id = ?", (meeting_point_id,))
+    conn.commit()
+
+
+# --- Per-tour layout ("style") overrides -------------------------------------
+# See docgen/style_override.py: a JSON blob of cell fill/border/font/
+# number-format + column widths + merge ranges that differ from the shared
+# template for one tour, captured from a user's manually-fixed workbook.
+# No booking/customer data is ever stored here -- only styling, keyed by
+# tour name (fuzzy-matched the same way as itinerary variants).
+
+def save_tour_style_override(conn: sqlite3.Connection, tour_name: str, style_diff: dict) -> int:
+    """Upsert: replaces any existing override for a fuzzy-matching tour
+    name (a tour keeps at most one saved layout fix, always the latest)."""
+    payload = json.dumps(style_diff)
+    existing = conn.execute("SELECT id, tour_name FROM tour_style_overrides").fetchall()
+    match = next((row for row in existing if tour_names_match(row["tour_name"], tour_name)), None)
+    if match:
+        conn.execute(
+            "UPDATE tour_style_overrides SET style_diff = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (payload, match["id"]),
+        )
+        conn.commit()
+        return match["id"]
+    cursor = conn.execute(
+        "INSERT INTO tour_style_overrides (tour_name, style_diff) VALUES (?, ?)",
+        (tour_name, payload),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_tour_style_override(conn: sqlite3.Connection, tour_name: str) -> dict | None:
+    rows = conn.execute(
+        "SELECT * FROM tour_style_overrides ORDER BY updated_at DESC"
+    ).fetchall()
+    for row in rows:
+        if tour_names_match(row["tour_name"], tour_name):
+            return json.loads(row["style_diff"])
+    return None
+
+
+def list_tour_style_overrides(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT id, tour_name, updated_at FROM tour_style_overrides ORDER BY updated_at DESC"
+    ).fetchall()
+
+
+def delete_tour_style_override(conn: sqlite3.Connection, override_id: int) -> None:
+    conn.execute("DELETE FROM tour_style_overrides WHERE id = ?", (override_id,))
     conn.commit()
