@@ -397,10 +397,17 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     variants_state_key = f"{key_prefix}_itinerary_variants"
     variant_id_state_key = f"{key_prefix}_itinerary_variant_id"
 
+    # Always re-query the saved-pattern list (cheap SQLite lookup) so a
+    # pattern saved elsewhere in this browser session (e.g. via マスタ管理's
+    # guide-request PDF import) shows up in the picker below immediately,
+    # even if `tour_name` itself hasn't changed since the last render --
+    # only the auto-populated table content is gated on that, so we don't
+    # clobber whatever the user is currently editing on every rerun.
+    variants: list = db.list_tour_itinerary_variants(conn, tour_name)
+    st.session_state[variants_state_key] = variants
+
     if st.session_state.get(tour_name_state_key) != tour_name:
         st.session_state[tour_name_state_key] = tour_name
-        variants = db.list_tour_itinerary_variants(conn, tour_name)
-        st.session_state[variants_state_key] = variants
         if booking.tour_name == tour_name and booking.itinerary:
             st.session_state[df_state_key] = itinerary_to_df(booking.itinerary)
             st.session_state[variant_id_state_key] = None
@@ -416,7 +423,6 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
             st.session_state[variant_id_state_key] = None
             st.info("このツアー名の行程パターンはまだありません。下の表に入力して保存すると、次回このツアー名で呼び出せます。")
 
-    variants: list = st.session_state[variants_state_key]
     if variants:
         picker_options = ["(現在の内容のまま)"] + [f"{v.label}｜{v.created_at[:10]}" for v in variants]
         picked = st.selectbox("保存済みの行程パターンを読み込む", picker_options, key=f"{key_prefix}_variant_picker")
