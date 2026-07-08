@@ -64,32 +64,38 @@ tours = {
         "name": "Izakaya and Japanese 'Snack Bar' Tour in Kakunodate (Akita)",
         "price": 20000
     },
-    # Attracxi系（2名基準 税抜90,000円/人）
+    # Attracxi系: タリフの人数区分ごとの税込・1人あたり総額表（1名198,000円
+    # 〜4名66,000円/人）を使う。PV/G の区別は適用されない（一律料金）。
     "attracxi_dewa": {
         "name": "Attracxi: Mysteries of the Three Holy Mountains of Dewa",
-        "price": 90000
+        "attracxi": True
     },
     "attracxi_hiraizumi": {
         "name": "Attracxi: Hiraizumi Full Day Tour from Sendai",
-        "price": 90000
+        "attracxi": True
     },
     "attracxi_samurai": {
         "name": "Attracxi: Master the Way of the Samurai",
-        "price": 90000
+        "attracxi": True
     },
     "attracxi_shiogama_matsushima": {
         "name": "Attracxi: Shiogama's Delicacy Trail to Matsushima's Natural Wonders",
-        "price": 90000
+        "attracxi": True
     },
     "attracxi_cask": {
         "name": "Attracxi: From Cask to Glass – Tohoku's Craft Journey with Local Cuisine",
-        "price": 90000
+        "attracxi": True
     },
     "attracxi_naruko": {
         "name": "Attracxi: Step into Tradition – Craft, Culture, and Hot Springs in Naruko",
-        "price": 90000
+        "attracxi": True
     },
 }
+
+# Attracxiシリーズ共通の税込・人数区分別1人あたり単価（タリフ記載分）。
+# 5名以上はタリフに個別記載がないため、4名単価に近い目安値を暫定使用。
+ATTRACXI_GROSS_PER_PERSON = {1: 198000, 2: 99000, 3: 82500, 4: 66000}
+ATTRACXI_FALLBACK_PER_PERSON = 60500
 
 # --- EXO専用ツアーリスト（税込単価）---
 exo_tours = {
@@ -263,6 +269,16 @@ def calculate_price(mode, tour_data, pax, type_):
     base = tour_data.get("price", 0)
     warning = None
 
+    if tour_data.get("attracxi"):
+        # Attracxiシリーズはタリフの人数区分別・税込1人あたり総額表を使う。
+        # AGT/BtoC/PV・Gの違いによる加算はない（一律料金）。
+        unit = ATTRACXI_GROSS_PER_PERSON.get(pax, ATTRACXI_FALLBACK_PER_PERSON)
+        total = unit * pax
+        total_str = f"{total:,}"
+        formula_en = f"{unit:,} yen × {pax} pax = **{total_str} yen (tax included)**"
+        formula_jp = f"{unit:,}円 × {pax}名 ＝ **{total_str}円（税込）**"
+        return total, formula_jp, formula_en, warning
+
     if mode == "EXO":
         per_vehicle = tour_data.get("perVehicle", False)
         per_group = tour_data.get("perGroup", False)
@@ -347,6 +363,8 @@ pt_tour_data = pt_tour_list[pt_tour]
 _pt_supplier_title = pt_tour_data.get("supplier_title")
 if _pt_supplier_title and _pt_supplier_title != pt_tour_data["name"]:
     st.caption(f"社内タイトル（Supplier title）: {_pt_supplier_title}")
+if pt_tour_data.get("attracxi"):
+    st.caption("ℹ️ Attracxiシリーズはタイプ（G/PV）に関わらず一律料金です。")
 
 pt_total, pt_formula_jp, pt_formula_en, pt_warning = calculate_price(pt_mode, pt_tour_data, pt_pax, pt_type)
 if pt_warning:
@@ -389,6 +407,8 @@ tour = st.selectbox(
 _supplier_title = tour_list[tour].get("supplier_title")
 if _supplier_title and _supplier_title != tour_list[tour]["name"]:
     st.caption(f"社内タイトル（Supplier title）: {_supplier_title}")
+if tour_list[tour].get("attracxi"):
+    st.caption("ℹ️ Attracxiシリーズはタイプ（G/PV）に関わらず一律料金です。")
 
 # --- 入力欄 ---
 st.subheader("📥 受信メール本文を貼り付け")
@@ -496,7 +516,9 @@ http://www.tohoku-local-secret-tours.jp
     st.code(output, language="markdown")
 
     st.subheader("💴 料金内訳")
-    if mode == "EXO":
+    if tour_data.get("attracxi"):
+        st.info(f"Attracxiシリーズ一律料金（税込）: {formula_jp}")
+    elif mode == "EXO":
         st.info(f"EXO料金（税込）: {formula_jp}")
     else:
         st.info(
