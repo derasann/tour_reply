@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -39,6 +40,22 @@ def _split_list(text: str) -> list[str]:
 
 def _join_list(items: list[str]) -> str:
     return "; ".join(items)
+
+
+_UNIT_PRICE_RE = re.compile(r"^[@＠]?\s*[~〜]?([\d,]+)\s*円?\s*[/／]?\s*台?\s*[×xX]\s*\d+\s*[+＋]?\s*\d*\s*$")
+
+
+def _guess_unit_price(payment_label: str | None) -> int | None:
+    """Best-effort single-yen-amount guess from a guide-request itinerary
+    row's free-text payment_label (e.g. "@200円 × 1" -> 200,
+    "1,500円/台 × 1" -> 1500). Deliberately conservative: bar-hopping-style
+    bundled/multi-tier text (e.g. "1名:7,500円 / 2名:13,500円 / ...") or
+    anything else that doesn't match this single-price shape returns None,
+    left for manual entry instead of risking a wrong guess."""
+    if not payment_label:
+        return None
+    match = _UNIT_PRICE_RE.match(payment_label.strip())
+    return int(match.group(1).replace(",", "")) if match else None
 
 
 # --- ガイド ---------------------------------------------------------------
@@ -497,34 +514,129 @@ if uploaded_guide_pdf is not None:
             "行程パターン名", value=f"PDF取込 {date.today().isoformat()}", key="import_variant_label"
         )
 
-        import_col1, import_col2 = st.columns(2)
-        with import_col1:
-            if st.button("行程パターンとして保存", type="primary", key="import_save_itinerary"):
-                stops = [
-                    ItineraryStop(
-                        time_label=row.get("time_label", ""),
-                        stopover_name=row.get("stopover_name", ""),
-                        payment_label=row.get("payment_label", ""),
-                        payment_method=row.get("payment_method", ""),
-                        stopover_info=row.get("stopover_info", ""),
-                    )
-                    for row in itinerary_rows
-                ]
-                db.save_tour_itinerary_variant(conn, import_tour_name, import_variant_label, stops)
-                st.success(f"「{import_tour_name}」の行程パターンとして保存しました。")
-        with import_col2:
-            if st.button("単価が明確な立ち寄り先を単価マスタに追加", key="import_save_stopovers"):
-                existing_names = {s.name for s in db.list_stopovers(conn)}
-                added = 0
-                for row in itinerary_rows:
-                    name = str(row.get("stopover_name", "")).strip()
-                    price = row.get("unit_price")
-                    if not name or price is None or name in existing_names:
-                        continue
-                    db.upsert_stopover(
-                        conn,
-                        Stopover(id=None, name=name, address=str(row.get("stopover_info", "")), unit_price=int(price)),
-                    )
-                    existing_names.add(name)
-                    added += 1
-                st.success(f"立ち寄り先単価に{added}件追加しました（単価が明確だった項目のみ、既存と同名のものはスキップ）。")
+        if st.button("行程パターンとして保存", type="primary", key="import_save_itinerary"):
+            stops = [
+                ItineraryStop(
+                    time_label=row.get("time_label", ""),
+                    stopover_name=row.get("stopover_name", ""),
+                    payment_label=row.get("payment_label", ""),
+                    payment_method=row.get("payment_method", ""),
+                    stopover_info=row.get("stopover_info", ""),
+                )
+                for row in itinerary_rows
+            ]
+            db.save_tour_itinerary_variant(conn, import_tour_name, import_variant_label, stops)
+            st.success(f"「{import_tour_name}」の行程パターンとして保存しました。")
+
+        st.write("**単価マスタへの追加**")
+        st.caption(
+            "単価が読み取れた行は自動で入っています。空欄や間違っている場合は書き換えてから追加してください。"
+            "「追加」のチェックを外した行や単価が空欄の行は追加されません。"
+        )
+        import_stopover_df = pd.DataFrame(
+            [
+                {
+                    "追加": True,
+                    "立ち寄り先": row.get("stopover_name", ""),
+                    "単価（円）": row.get("unit_price") if row.get("unit_price") is not None else _guess_unit_price(row.get("payment_label")),
+                    "情報": row.get("stopover_info", ""),
+                }
+                for row in itinerary_rows
+                if str(row.get("stopover_name", "")).strip()
+            ]
+        )
+        edited_import_stopovers = st.data_editor(
+            import_stopover_df,
+            width="stretch",
+            key="import_stopover_review",
+            column_config={
+                "追加": st.column_config.CheckboxColumn("追加"),
+                "単価（円）": st.column_config.NumberColumn("単価（円）"),
+            },
+        )
+        if st.button("チェックした立ち寄り先を単価マスタに追加", key="import_save_stopovers"):
+            existing_names = {s.name for s in db.list_stopovers(conn)}
+            added, skipped_existing = 0, 0
+            for row in edited_import_stopovers.to_dict("records"):
+                name = str(row.get("立ち寄り先") or "").strip()
+                price = row.get("単価（円）")
+                if not row.get("追加") or not name or pd.isna(price):
+                    continue
+                if name in existing_names:
+                    skipped_existing += 1
+                    continue
+                db.upsert_stopover(
+                    conn, Stopover(id=None, name=name, address=str(row.get("情報") or ""), unit_price=int(price))
+                )
+                existing_names.add(name)
+                added += 1
+            st.success(
+                f"立ち寄り先単価に{added}件追加しました。"
+                + (f"（既存と同名の{skipped_existing}件はスキップ）" if skipped_existing else "")
+            )
+
+st.divider()
+
+# --- 保存済みの行程からの取込（PDF再読み込み不要） ------------------------------
+st.header("保存済みの行程から立ち寄り先単価を追加")
+st.caption(
+    "PDFを読み込まなくても、これまでに保存した行程パターンからツアーを選んで、"
+    "立ち寄り先単価をまとめて追加できます。単価が「@200円 × 1」のように単純な場合は自動で数字を入れますが、"
+    "バーホッピングのようにまとまった金額の場合は空欄になるので、必要なら手入力してください。"
+)
+saved_tour_names = db.list_tour_itinerary_names(conn)
+if not saved_tour_names:
+    st.caption("まだ保存された行程パターンがありません。")
+else:
+    browse_tour_name = st.selectbox("ツアーを選択", saved_tour_names, key="browse_stopover_tour")
+    browse_variants = db.list_tour_itinerary_variants(conn, browse_tour_name)
+    if not browse_variants:
+        st.caption("このツアーの行程パターンが見つかりませんでした。")
+    else:
+        browse_variant_options = [f"{v.label}｜{v.created_at[:10]}" for v in browse_variants]
+        picked_browse_label = st.selectbox("行程パターン", browse_variant_options, key="browse_stopover_variant")
+        picked_browse_variant = browse_variants[browse_variant_options.index(picked_browse_label)]
+
+        browse_stopover_df = pd.DataFrame(
+            [
+                {
+                    "追加": True,
+                    "立ち寄り先": stop.stopover_name,
+                    "単価（円）": _guess_unit_price(stop.payment_label),
+                    "支払額（元の記載）": stop.payment_label,
+                    "情報": stop.stopover_info,
+                }
+                for stop in picked_browse_variant.itinerary
+                if stop.stopover_name.strip()
+            ]
+        )
+        edited_browse_stopovers = st.data_editor(
+            browse_stopover_df,
+            width="stretch",
+            key="browse_stopover_editor",
+            column_config={
+                "追加": st.column_config.CheckboxColumn("追加"),
+                "単価（円）": st.column_config.NumberColumn("単価（円）"),
+                "支払額（元の記載）": st.column_config.TextColumn("支払額（元の記載）", disabled=True),
+            },
+        )
+        if st.button("チェックした立ち寄り先を単価マスタに追加", key="browse_save_stopovers"):
+            existing_names = {s.name for s in db.list_stopovers(conn)}
+            added, skipped_existing = 0, 0
+            for row in edited_browse_stopovers.to_dict("records"):
+                name = str(row.get("立ち寄り先") or "").strip()
+                price = row.get("単価（円）")
+                if not row.get("追加") or not name or pd.isna(price):
+                    continue
+                if name in existing_names:
+                    skipped_existing += 1
+                    continue
+                db.upsert_stopover(
+                    conn, Stopover(id=None, name=name, address=str(row.get("情報") or ""), unit_price=int(price))
+                )
+                existing_names.add(name)
+                added += 1
+            st.success(
+                f"立ち寄り先単価に{added}件追加しました。"
+                + (f"（既存と同名の{skipped_existing}件はスキップ）" if skipped_existing else "")
+            )
