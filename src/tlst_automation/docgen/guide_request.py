@@ -70,6 +70,19 @@ def _display_date_jp(iso_date: str) -> str:
     return f"{parsed.year}年{parsed.month}月{parsed.day}日（{weekday}）"
 
 
+def _fee_text(booking: BookingRequest) -> str:
+    """Total guide fee, plus a compact breakdown when there's a non-zero
+    adjustment (e.g. extra hotel-pickup time) so the guide/office can see
+    what the total is actually made of, not just the final figure."""
+    if booking.guide_fee is None:
+        return tbd(None)
+    text = f"{booking.guide_fee:,}円"
+    if booking.guide_fee_adjustment:
+        base = booking.guide_fee - booking.guide_fee_adjustment
+        text += f"（基本{base:,}／調整{booking.guide_fee_adjustment:+,}）"
+    return text
+
+
 def _find_shape(slide, contains: str):
     for shape in slide.shapes:
         if shape.has_text_frame and contains in shape.text_frame.text:
@@ -100,7 +113,7 @@ def _fill_header(slide, booking: BookingRequest) -> None:
     _set_paragraph_text(paragraphs[3], f"ゲスト名 \t{_participants_text(booking) or tba(None)}")
     _set_paragraph_text(paragraphs[4], f"時間 \t{booking.start_time} - {booking.end_time}")
     _set_paragraph_text(paragraphs[5], f"人数 \t{booking.pax}名")
-    fee_text = f"{booking.guide_fee:,}円" if booking.guide_fee is not None else tbd(None)
+    fee_text = _fee_text(booking)
     _set_paragraph_text(paragraphs[6], f"ガイド謝金  \t{fee_text}  　　　　　　　【行程】")
 
 

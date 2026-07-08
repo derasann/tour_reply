@@ -7,6 +7,7 @@ not a reusable library module.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import os
 import re
 import sys
@@ -39,6 +40,7 @@ from tlst_automation.rules import tbd  # noqa: E402
 
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
 MEETING_POINT_PHOTOS_DIR = Path(__file__).resolve().parent / "data" / "meeting_point_photos"
+DRAFT_BOOKING_PATH = Path(__file__).resolve().parent / "data" / "draft_booking.json"
 ITINERARY_COLUMNS = ["時間", "立ち寄り先", "支払額", "支払方法", "立ち寄り先情報"]
 CHECKLIST_LABELS = {
     "pre": ["見積提出", "コンファメーション送付", "インボイス送付"],
@@ -55,6 +57,35 @@ def ensure_api_key() -> None:
 @st.cache_resource
 def get_conn():
     return db.connect()
+
+
+def save_draft_booking(booking: BookingRequest) -> None:
+    """Overwrite the single local draft slot so an in-progress booking
+    (AI-extracted + whatever the user has edited so far) survives a closed
+    browser tab without re-uploading/re-extracting the source PDF.
+
+    Deliberately a single slot, not a growing history: this holds one
+    booking's worth of customer data (name, dietary/allergy notes, etc.) on
+    local disk at a time, and is meant to be cleared once its documents are
+    generated (see clear_draft_booking) -- it isn't a bookings database.
+    """
+    DRAFT_BOOKING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DRAFT_BOOKING_PATH.write_text(
+        json.dumps(booking.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_draft_booking() -> BookingRequest | None:
+    if not DRAFT_BOOKING_PATH.exists():
+        return None
+    try:
+        return BookingRequest.from_dict(json.loads(DRAFT_BOOKING_PATH.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return None
+
+
+def clear_draft_booking() -> None:
+    DRAFT_BOOKING_PATH.unlink(missing_ok=True)
 
 
 def extract_text_from_upload(uploaded_file) -> str:
@@ -228,6 +259,11 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     guides = db.list_guides(conn)
     guide_names = ["(TBA)"] + [g.name for g in guides]
 
+    all_tours = db.list_tours(conn)
+    matched_tour = next(
+        (t for t in all_tours if tour_name and rules.tour_matches_any_name(tour_name, t.name, t.exo_name)), None
+    )
+
     # Auto-fill meeting point / inclusions / exclusions from the Tour
     # master when the tour name changes (still freely editable below).
     tour_master_last_key = f"{key_prefix}_tourmaster_tour_name_last"
@@ -235,9 +271,6 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         st.session_state[tour_master_last_key] = booking.tour_name
     if st.session_state[tour_master_last_key] != tour_name:
         st.session_state[tour_master_last_key] = tour_name
-        matched_tour = next(
-            (t for t in db.list_tours(conn) if tour_name and rules.tour_names_match(t.name, tour_name)), None
-        )
         if matched_tour:
             st.session_state[f"{key_prefix}_mp_en"] = matched_tour.meeting_point_en or booking.meeting_point_en
             st.session_state[f"{key_prefix}_mp_jp"] = matched_tour.meeting_point_jp or booking.meeting_point_jp
@@ -293,7 +326,9 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
             key=f"{key_prefix}_guide_fee_auto_calc",
         )
 
+        standard_duration = matched_tour.standard_duration_hours if matched_tour else None
         shop_arrangement_bonus = False
+        extra_fee, extra_note = 0, ""
         if guide_fee_auto_calc:
             if rules.is_bar_hopping_tour(tour_name):
                 shop_arrangement_bonus = st.checkbox(
@@ -302,13 +337,24 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
                     key=f"{key_prefix}_shop_arrangement_bonus",
                 )
             base_fee, base_formula = rules.compute_guide_base_fee(
-                tour_name, pax, start_time, end_time, shop_arrangement_bonus=shop_arrangement_bonus,
+                tour_name, pax, start_time, end_time,
+                shop_arrangement_bonus=shop_arrangement_bonus,
+                duration_hours_override=standard_duration,
             )
             if base_fee is not None:
                 st.caption(f"基本謝金: {base_formula}")
+                if standard_duration is not None:
+                    st.caption(
+                        f"（「{matched_tour.name}」の基準時間 {standard_duration:g}時間を使用。"
+                        "実際の時間との差は下の調整欄に自動反映されます）"
+                    )
             else:
                 st.warning(base_formula)
                 base_fee = 0
+
+            extra_fee, extra_note = rules.extra_duration_fee(start_time, end_time, standard_duration)
+            if extra_note:
+                st.caption(extra_note)
         else:
             manual_base_default = max((booking.guide_fee or 0) - booking.guide_fee_adjustment, 0)
             base_fee = st.number_input(
@@ -316,6 +362,17 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
                 value=manual_base_default,
                 step=1000, key=f"{key_prefix}_guide_fee_manual_base",
             )
+            base_formula = f"手入力 {int(base_fee):,}円"
+
+        # Auto-suggest the extra-time fee into the adjustment field only when
+        # the tour/time/auto-calc combination actually changes, so it doesn't
+        # clobber a value the user has since edited by hand.
+        adjustment_gate_key = f"{key_prefix}_guide_fee_adjustment_gate"
+        adjustment_gate_value = (tour_name, start_time, end_time, guide_fee_auto_calc)
+        if st.session_state.get(adjustment_gate_key) != adjustment_gate_value:
+            st.session_state[adjustment_gate_key] = adjustment_gate_value
+            if extra_fee:
+                st.session_state[f"{key_prefix}_guide_fee_adjustment"] = extra_fee
 
         guide_fee_adjustment = st.number_input(
             "ガイド謝金（調整用。ホテル送迎などで時間が増える場合など）",
@@ -325,9 +382,14 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         guide_fee = int(base_fee) + int(guide_fee_adjustment)
         st.metric("ガイド謝金合計", f"¥{guide_fee:,}")
 
+        guide_fee_breakdown_parts = [base_formula]
+        if guide_fee_adjustment:
+            guide_fee_breakdown_parts.append(f"調整 {int(guide_fee_adjustment):+,}円")
+        guide_fee_breakdown_parts.append(f"合計 {guide_fee:,}円")
+        guide_fee_breakdown = " / ".join(guide_fee_breakdown_parts)
+
         emergency_contact = st.text_input("緊急連絡先", value=booking.emergency_contact, key=f"{key_prefix}_emergency_contact")
     with col2:
-        all_tours = db.list_tours(conn)
         if all_tours:
             default_tour_pick = next(
                 (t.name for t in all_tours if tour_name and rules.tour_names_match(t.name, tour_name)),
@@ -509,6 +571,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         guide_fee_auto_calc=guide_fee_auto_calc,
         guide_fee_shop_arrangement_bonus=shop_arrangement_bonus,
         guide_fee_adjustment=int(guide_fee_adjustment),
+        guide_fee_breakdown=guide_fee_breakdown,
         emergency_contact=emergency_contact,
         meeting_point_name=meeting_point_choice if meeting_point_choice != "(カスタム入力)" else "",
         meeting_point_en=meeting_point_en,
@@ -580,6 +643,7 @@ def generate_documents(conn, updated: BookingRequest) -> None:
         "confirmation_pdf": str(confirmation_pdf) if confirmation_pdf else None,
         "guide_pdf": str(guide_pdf) if guide_pdf else None,
     }
+    clear_draft_booking()
 
 
 def _booking_out_dir(generated: dict) -> Path:

@@ -48,6 +48,10 @@ class Tour:
     meeting_point_jp: str = ""
     inclusions: list[str] = field(default_factory=list)
     exclusions: list[str] = field(default_factory=list)
+    exo_name: str = ""  # EXO correspondence often uses a different tour name than AGT/BtoC
+    standard_duration_hours: float | None = None  # the tour's own duration, for guide-fee auto-calc --
+    # any extra time in a booking's actual start/end (e.g. a hotel pickup) is billed separately via
+    # BookingRequest.guide_fee_adjustment instead of inflating the base-fee formula (see rules.py)
 
 
 @dataclass(frozen=True)

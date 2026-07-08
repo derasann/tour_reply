@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS tours (
     meeting_point_en TEXT DEFAULT '',
     meeting_point_jp TEXT DEFAULT '',
     inclusions TEXT DEFAULT '[]',
-    exclusions TEXT DEFAULT '[]'
+    exclusions TEXT DEFAULT '[]',
+    exo_name TEXT DEFAULT '',
+    standard_duration_hours REAL
 );
 
 CREATE TABLE IF NOT EXISTS stopovers (
@@ -100,6 +102,8 @@ CREATE TABLE IF NOT EXISTS tour_style_overrides (
 # tables, just add the new column with its default.
 _COLUMN_MIGRATIONS = [
     ("guides", "nickname", "TEXT DEFAULT ''"),
+    ("tours", "exo_name", "TEXT DEFAULT ''"),
+    ("tours", "standard_duration_hours", "REAL"),
 ]
 
 
@@ -286,6 +290,8 @@ def list_tours(conn: sqlite3.Connection) -> list[Tour]:
             meeting_point_jp=row["meeting_point_jp"],
             inclusions=json.loads(row["inclusions"]),
             exclusions=json.loads(row["exclusions"]),
+            exo_name=row["exo_name"],
+            standard_duration_hours=row["standard_duration_hours"],
         )
         for row in rows
     ]

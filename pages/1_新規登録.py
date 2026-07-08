@@ -10,12 +10,15 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from portal_common import (  # noqa: E402
+    clear_draft_booking,
     combine_uploaded_texts,
     ensure_api_key,
     generate_documents,
     get_conn,
+    load_draft_booking,
     render_booking_form,
     render_downloads,
+    save_draft_booking,
 )
 from tlst_automation.ai_extractor import ExtractionError, extract_booking_request  # noqa: E402
 
@@ -27,6 +30,24 @@ st.title("新規ツアー登録")
 
 if "booking" not in st.session_state:
     st.session_state.booking = None
+
+if st.session_state.booking is None and not st.session_state.get("_draft_dismissed"):
+    draft = load_draft_booking()
+    if draft is not None:
+        st.info(
+            f"前回保存した下書きがあります：「{draft.tour_name or '(ツアー名未入力)'}」"
+            f"（{draft.tour_date or '日程未入力'}）"
+        )
+        draft_col1, draft_col2 = st.columns(2)
+        with draft_col1:
+            if st.button("この下書きを読み込む", key="load_draft"):
+                st.session_state.booking = draft
+                st.rerun()
+        with draft_col2:
+            if st.button("下書きを破棄する", key="discard_draft"):
+                clear_draft_booking()
+                st.session_state["_draft_dismissed"] = True
+                st.rerun()
 
 st.header("1. メールのやり取りをドラッグ＆ドロップ")
 uploaded_files = st.file_uploader(
@@ -70,8 +91,15 @@ if booking is not None:
     st.header("2. 内容の確認・補完")
     updated = render_booking_form(conn, booking, key_prefix="new")
 
-    if st.button("書類を生成する", type="primary", key="new_generate"):
-        generate_documents(conn, updated)
+    save_col, generate_col = st.columns(2)
+    with save_col:
+        if st.button("💾 下書きを保存する", key="save_draft"):
+            st.session_state.booking = updated
+            save_draft_booking(updated)
+            st.success("下書きを保存しました。ブラウザを閉じても、次回このページを開くと読み込めます。")
+    with generate_col:
+        if st.button("書類を生成する", type="primary", key="new_generate"):
+            generate_documents(conn, updated)
 
 st.divider()
 render_downloads()

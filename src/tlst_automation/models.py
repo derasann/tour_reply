@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 TBA = "TBA"
 TBD = "TBD"
@@ -102,6 +102,7 @@ class BookingRequest:
     guide_fee_auto_calc: bool = True  # Miyagi-departure fee formula; off for Aomori/Yamagata etc.
     guide_fee_shop_arrangement_bonus: bool = False  # bar-hopping only: guide books the shops (+1,000)
     guide_fee_adjustment: int = 0  # manual tweak (e.g. extra time for a hotel pickup)
+    guide_fee_breakdown: str = ""  # e.g. "3時間 × 2,000円 = 6,000円 / 調整 +2,000円 / 合計 8,000円", shown on the guide request
     emergency_contact: str = TBD
 
     meeting_point_name: str = ""  # selected MeetingPoint master entry, if any (for photo lookup)
@@ -119,6 +120,26 @@ class BookingRequest:
     sales_lines: list[SalesLine] = field(default_factory=list)
 
     feedback: TourFeedback | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Full round-trippable serialization (see from_dict) -- used for the
+        one-slot local "draft" save in the new-registration page, so an
+        in-progress booking survives a closed browser tab without needing a
+        persistent bookings database (see db.py's module docstring)."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "BookingRequest":
+        data = dict(data)
+        data["participants"] = [Participant(**p) for p in data.get("participants") or []]
+        data["itinerary"] = [ItineraryStop(**s) for s in data.get("itinerary") or []]
+        data["checklist_pre"] = [ChecklistItem(**c) for c in data.get("checklist_pre") or []]
+        data["checklist_during"] = [ChecklistItem(**c) for c in data.get("checklist_during") or []]
+        data["checklist_post"] = [ChecklistItem(**c) for c in data.get("checklist_post") or []]
+        data["sales_lines"] = [SalesLine(**s) for s in data.get("sales_lines") or []]
+        feedback = data.get("feedback")
+        data["feedback"] = TourFeedback(**feedback) if feedback else None
+        return cls(**data)
 
     def to_sheet_row_payload(self) -> dict[str, object]:
         return {

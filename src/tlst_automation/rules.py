@@ -180,6 +180,7 @@ def compute_guide_base_fee(
     end_time: str,
     *,
     shop_arrangement_bonus: bool = False,
+    duration_hours_override: float | None = None,
 ) -> tuple[int | None, str]:
     """Guide base-fee formula for Miyagi-departure tours (Aomori/Yamagata
     etc. tours are run by the local team and negotiated case-by-case, so
@@ -189,6 +190,12 @@ def compute_guide_base_fee(
     personally handles the shop reservations. Everything else: tour
     duration (hours) × 2,000円, plus 1,000円 per guest beyond 2 (i.e. pax 3
     -> +1,000, pax 4 -> +2,000, ...).
+
+    `duration_hours_override`, when given, is used instead of the raw
+    start_time/end_time difference -- this is the tour's own standard
+    duration from the Tour master, so that extra time in a booking's actual
+    times (e.g. a hotel pickup added on) doesn't inflate this base formula;
+    see extra_duration_fee() for billing that difference separately.
     """
     if is_bar_hopping_tour(tour_name):
         amount = BAR_HOP_BASE_GUIDE_FEE
@@ -198,7 +205,7 @@ def compute_guide_base_fee(
             formula += f" + 店舗調整担当 {SHOP_ARRANGEMENT_BONUS:,}円"
         return amount, formula
 
-    duration = tour_duration_hours(start_time, end_time)
+    duration = duration_hours_override if duration_hours_override is not None else tour_duration_hours(start_time, end_time)
     if duration is None:
         return None, "開始・終了時間が不明なため自動計算できません"
     amount = round(duration * GUIDE_FEE_HOURLY_RATE)
@@ -208,6 +215,38 @@ def compute_guide_base_fee(
         amount += addon
         formula += f" + 人数加算（{pax}名）{addon:,}円"
     return amount, formula
+
+
+def extra_duration_fee(
+    start_time: str, end_time: str, standard_duration_hours: float | None
+) -> tuple[int, str]:
+    """Extra guide-fee for actual time beyond a tour's standard duration
+    (e.g. an added hotel pickup/drop-off leg), meant to be billed via
+    BookingRequest.guide_fee_adjustment instead of folded into the base-fee
+    formula above. Returns (0, "") if there's no standard duration to
+    compare against, or the actual time isn't longer.
+    """
+    if standard_duration_hours is None:
+        return 0, ""
+    actual_duration = tour_duration_hours(start_time, end_time)
+    if actual_duration is None or actual_duration <= standard_duration_hours:
+        return 0, ""
+    extra_hours = actual_duration - standard_duration_hours
+    extra_fee = round(extra_hours * GUIDE_FEE_HOURLY_RATE)
+    note = (
+        f"実際の時間が基準（{standard_duration_hours:g}時間）より{extra_hours:g}時間長いため、"
+        f"送迎等の調整分として{extra_fee:,}円を自動反映"
+    )
+    return extra_fee, note
+
+
+def tour_matches_any_name(tour_name: str, candidate_name: str, candidate_exo_name: str = "") -> bool:
+    """Like tour_names_match, but also checks a Tour master entry's EXO-side
+    alias name -- EXO correspondence often refers to the same tour with
+    different wording than the AGT/BtoC name (see master.Tour.exo_name)."""
+    return tour_names_match(tour_name, candidate_name) or (
+        bool(candidate_exo_name) and tour_names_match(tour_name, candidate_exo_name)
+    )
 
 
 # Owner's own mobile is fixed on every guide request's emergency-contact

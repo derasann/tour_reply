@@ -146,16 +146,25 @@ st.divider()
 # --- ツアー ---------------------------------------------------------------
 st.header("ツアー")
 tours = db.list_tours(conn)
+st.caption(
+    "「exo_name」はEXO向けメールで使われる別名（違う場合のみ）。"
+    "「standard_duration_hours」はガイド謝金の自動計算に使う基準時間（迎え等で実際の時間が延びても、"
+    "差分はガイド謝金の調整欄に自動で反映されるようになります）。"
+)
 tours_df = pd.DataFrame(
     [
         {
             "id": t.id, "name": t.name, "area": t.area, "category": t.category,
             "meeting_point_en": t.meeting_point_en, "meeting_point_jp": t.meeting_point_jp,
             "inclusions": _join_list(t.inclusions), "exclusions": _join_list(t.exclusions),
+            "exo_name": t.exo_name, "standard_duration_hours": t.standard_duration_hours,
         }
         for t in tours
     ],
-    columns=["id", "name", "area", "category", "meeting_point_en", "meeting_point_jp", "inclusions", "exclusions"],
+    columns=[
+        "id", "name", "area", "category", "meeting_point_en", "meeting_point_jp", "inclusions", "exclusions",
+        "exo_name", "standard_duration_hours",
+    ],
 )
 edited_tours = st.data_editor(
     tours_df,
@@ -167,6 +176,8 @@ edited_tours = st.data_editor(
         "category": st.column_config.SelectboxColumn("category", options=["bar_hop", "food", "sightseeing", "other"]),
         "inclusions": st.column_config.TextColumn("inclusions（;区切り）"),
         "exclusions": st.column_config.TextColumn("exclusions（;区切り）"),
+        "exo_name": st.column_config.TextColumn("exo_name（EXO向け別名）"),
+        "standard_duration_hours": st.column_config.NumberColumn("standard_duration_hours（基準時間）", step=0.5),
     },
 )
 if st.button("ツアーを保存", type="primary", key="save_tours"):
@@ -186,6 +197,8 @@ if st.button("ツアーを保存", type="primary", key="save_tours"):
                 meeting_point_jp=row.get("meeting_point_jp") or "",
                 inclusions=_split_list(str(row.get("inclusions") or "")),
                 exclusions=_split_list(str(row.get("exclusions") or "")),
+                exo_name=row.get("exo_name") or "",
+                standard_duration_hours=float(row["standard_duration_hours"]) if pd.notna(row.get("standard_duration_hours")) else None,
             ),
         )
         kept_ids.add(row_id or new_id)
