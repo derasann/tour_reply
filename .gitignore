@@ -20,3 +20,9 @@ generated/
 # Real customer PDFs kept for local reference only -- never commit (this
 # repo is public); contains real names, allergy/medical info, phone numbers.
 reference_examples/
+
+# Share-package zips (created by create_tour_portal_share_zip.command) embed
+# a real Anthropic API key -- never commit these to this public repo.
+*.zip
+TLST_Tour_Portal_Share/
+TLST_PDF_Masker_Share/
