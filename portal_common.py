@@ -32,7 +32,6 @@ from tlst_automation.docgen.tour_workbook import generate_tour_workbook  # noqa:
 from tlst_automation.docgen import style_override  # noqa: E402
 from tlst_automation.models import (  # noqa: E402
     BookingRequest,
-    ChecklistItem,
     ItineraryStop,
 )
 from tlst_automation import rules  # noqa: E402
@@ -42,11 +41,6 @@ GENERATED_DIR = Path(__file__).resolve().parent / "generated"
 MEETING_POINT_PHOTOS_DIR = Path(__file__).resolve().parent / "data" / "meeting_point_photos"
 DRAFT_BOOKING_PATH = Path(__file__).resolve().parent / "data" / "draft_booking.json"
 ITINERARY_COLUMNS = ["時間", "立ち寄り先", "支払額", "支払方法", "立ち寄り先情報"]
-CHECKLIST_LABELS = {
-    "pre": ["見積提出", "コンファメーション送付", "インボイス送付"],
-    "during": ["ガイド手配", "保険加入"],
-    "post": ["ガイド報告", "ガイド清算シート記入確認"],
-}
 
 
 def ensure_api_key() -> None:
@@ -187,10 +181,6 @@ def df_to_itinerary(df: pd.DataFrame) -> list[ItineraryStop]:
             )
         )
     return stops
-
-
-def _is_checked(items: list[ChecklistItem], label: str) -> bool:
-    return any(item.label == label and item.done for item in items)
 
 
 _INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')
@@ -496,6 +486,30 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
                 st.session_state[df_state_key] = itinerary_to_df(picked_variant.itinerary)
                 st.session_state[variant_id_state_key] = picked_variant.id
 
+    # Fallback/override: browse ANY saved tour's patterns by name, in case
+    # the current tour_name text doesn't fuzzy-match a pattern saved under
+    # slightly different wording (e.g. AI extraction phrased it differently
+    # than a past guide-request import did).
+    manual_label_key = f"{key_prefix}_itinerary_manual_label"
+    with st.expander("他のツアー名で保存された行程パターンを探す（自動で見つからない場合）"):
+        all_saved_tour_names = db.list_tour_itinerary_names(conn)
+        if not all_saved_tour_names:
+            st.caption("まだ保存された行程パターンがありません。")
+        else:
+            manual_tour_pick = st.selectbox(
+                "ツアー名を選択", all_saved_tour_names, key=f"{key_prefix}_itinerary_manual_tour"
+            )
+            manual_variants = db.list_tour_itinerary_variants(conn, manual_tour_pick)
+            if manual_variants:
+                manual_options = [f"{v.label}｜{v.created_at[:10]}" for v in manual_variants]
+                manual_picked_label = st.selectbox("行程パターン", manual_options, key=f"{key_prefix}_itinerary_manual_variant")
+                manual_picked_variant = manual_variants[manual_options.index(manual_picked_label)]
+                if st.button("この行程を読み込む", key=f"{key_prefix}_itinerary_manual_load"):
+                    st.session_state[df_state_key] = itinerary_to_df(manual_picked_variant.itinerary)
+                    st.session_state[variant_id_state_key] = manual_picked_variant.id
+                    st.session_state[manual_label_key] = manual_picked_variant.label
+                    st.rerun()
+
     itinerary_df = st.data_editor(
         st.session_state[df_state_key],
         num_rows="dynamic",
@@ -504,7 +518,10 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     )
 
     current_variant_id = st.session_state.get(variant_id_state_key)
-    current_label = next((v.label for v in variants if v.id == current_variant_id), "")
+    current_label = (
+        next((v.label for v in variants if v.id == current_variant_id), None)
+        or st.session_state.get(manual_label_key, "")
+    )
     save_label = st.text_input(
         "行程パターン名（保存時のラベル）",
         value=current_label or date.today().isoformat(),
@@ -524,27 +541,6 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
             db.update_tour_itinerary_variant(conn, current_variant_id, save_label or current_label, stops_to_save)
             st.session_state[variants_state_key] = db.list_tour_itinerary_variants(conn, tour_name)
             st.success(f"「{save_label}」を上書き保存しました。")
-
-    st.subheader("手配状況チェックリスト")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.caption("予約前対応")
-        pre_done = {
-            label: st.checkbox(label, value=_is_checked(booking.checklist_pre, label), key=f"{key_prefix}_pre_{label}")
-            for label in CHECKLIST_LABELS["pre"]
-        }
-    with c2:
-        st.caption("ツアー関連対応")
-        during_done = {
-            label: st.checkbox(label, value=_is_checked(booking.checklist_during, label), key=f"{key_prefix}_during_{label}")
-            for label in CHECKLIST_LABELS["during"]
-        }
-    with c3:
-        st.caption("ツアー後")
-        post_done = {
-            label: st.checkbox(label, value=_is_checked(booking.checklist_post, label), key=f"{key_prefix}_post_{label}")
-            for label in CHECKLIST_LABELS["post"]
-        }
 
     return replace(
         booking,
@@ -580,9 +576,6 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         exclusions=[line for line in exclusions_text.splitlines() if line.strip()],
         insurance_amount=insurance_amount or None,
         itinerary=df_to_itinerary(itinerary_df),
-        checklist_pre=[ChecklistItem(label, done) for label, done in pre_done.items()],
-        checklist_during=[ChecklistItem(label, done) for label, done in during_done.items()],
-        checklist_post=[ChecklistItem(label, done) for label, done in post_done.items()],
     )
 
 
