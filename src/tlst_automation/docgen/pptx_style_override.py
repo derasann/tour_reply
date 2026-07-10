@@ -70,11 +70,26 @@ def _col_widths(tbl_xml: str) -> list[int]:
     return [int(w) for w in re.findall(r'w="(\d+)"', grid_match.group(0))]
 
 
+class StyleDiffError(ValueError):
+    pass
+
+
 def capture_style_diff(fixed_path: str | Path) -> dict:
     """Diff `fixed_path` (a user's manually-corrected copy of a generated
     guide-request PPTX) against the shared base template's itinerary
     table, cell by cell, and return only what differs: cell tcPr blocks
-    (fill/border/margins), column widths, and row heights."""
+    (fill/border/margins), column widths, and row heights.
+
+    Cells are matched purely by (row index, column index) in table order,
+    since PPTX table cells don't carry any stable ID of their own. That
+    only stays correct if the fixed file has the exact same table shape
+    as the template it was generated from -- if rows were added/deleted/
+    merged differently while "fixing" it in PowerPoint (e.g. deleting the
+    template's many unused blank itinerary rows), every row after the
+    change lines up with the wrong template row, silently producing a
+    diff that misapplies borders/fills to the wrong cells later. Raise
+    instead of returning a subtly-wrong diff.
+    """
     base_parts = _load_zip(TEMPLATE_PATH)
     fixed_parts = _load_zip(Path(fixed_path))
     base_slide = base_parts[SLIDE_PART].decode("utf-8")
@@ -89,10 +104,22 @@ def capture_style_diff(fixed_path: str | Path) -> dict:
     base_rows = [m.group(0) for m in _ROW_RE.finditer(base_tbl)]
     fixed_rows = [m.group(0) for m in _ROW_RE.finditer(fixed_tbl)]
 
+    if len(base_rows) != len(fixed_rows):
+        raise StyleDiffError(
+            f"行程表の行数がテンプレートと異なります（テンプレート{len(base_rows)}行 / "
+            f"アップロードされたファイル{len(fixed_rows)}行）。PowerPoint上で行の追加・削除・"
+            "結合を行わず、色や罫線などの見た目だけを変更してから再度アップロードしてください。"
+        )
+
     cells: dict[str, str] = {}
     for row_idx, (base_row, fixed_row) in enumerate(zip(base_rows, fixed_rows)):
         base_cells = [m.group(0) for m in _CELL_RE.finditer(base_row)]
         fixed_cells = [m.group(0) for m in _CELL_RE.finditer(fixed_row)]
+        if len(base_cells) != len(fixed_cells):
+            raise StyleDiffError(
+                f"行程表の{row_idx + 1}行目の列数がテンプレートと異なります。PowerPoint上でセルの結合・"
+                "分割を行わず、色や罫線などの見た目だけを変更してから再度アップロードしてください。"
+            )
         for col_idx, (base_cell, fixed_cell) in enumerate(zip(base_cells, fixed_cells)):
             base_tcpr_match = _TCPR_RE.search(base_cell)
             fixed_tcpr_match = _TCPR_RE.search(fixed_cell)
