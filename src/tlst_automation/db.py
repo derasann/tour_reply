@@ -17,7 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .master import Agent, Guide, MeetingPoint, Stopover, Tour
-from .models import ItineraryStop, ItineraryVariant
+from .models import GuideRequestStyleVariant, ItineraryStop, ItineraryVariant
 from .rules import tour_names_match
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "tours.db"
@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS tour_style_overrides (
     tour_name TEXT NOT NULL,
     style_diff TEXT NOT NULL DEFAULT '{}',
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tour_guide_request_styles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tour_name TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    style_diff TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -194,6 +202,58 @@ def list_tour_itinerary_names(conn: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT tour_name FROM tour_itinerary_variants ORDER BY tour_name"
     ).fetchall()
     return [row["tour_name"] for row in rows]
+
+
+# --- Per-tour guide-request PPTX layout patterns -----------------------------
+# Like itinerary variants, a tour can have several saved layout fixes (e.g.
+# bar-hopping's weekday vs weekend/holiday plan), so this keeps every saved
+# one rather than a single latest-wins override (contrast with
+# tour_style_overrides, the xlsx internal-sheet/confirmation equivalent).
+
+def _row_to_guide_request_style(row: sqlite3.Row) -> GuideRequestStyleVariant:
+    return GuideRequestStyleVariant(
+        id=row["id"],
+        tour_name=row["tour_name"],
+        label=row["label"],
+        style_diff=json.loads(row["style_diff"]),
+        created_at=row["created_at"],
+    )
+
+
+def list_tour_guide_request_styles(conn: sqlite3.Connection, tour_name: str) -> list[GuideRequestStyleVariant]:
+    rows = conn.execute(
+        "SELECT * FROM tour_guide_request_styles ORDER BY created_at DESC"
+    ).fetchall()
+    return [
+        _row_to_guide_request_style(row)
+        for row in rows
+        if tour_names_match(row["tour_name"], tour_name)
+    ]
+
+
+def save_tour_guide_request_style(conn: sqlite3.Connection, tour_name: str, label: str, style_diff: dict) -> int:
+    cursor = conn.execute(
+        "INSERT INTO tour_guide_request_styles (tour_name, label, style_diff) VALUES (?, ?, ?)",
+        (tour_name, label, json.dumps(style_diff)),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_tour_guide_request_style(conn: sqlite3.Connection, style_id: int) -> GuideRequestStyleVariant | None:
+    row = conn.execute("SELECT * FROM tour_guide_request_styles WHERE id = ?", (style_id,)).fetchone()
+    return _row_to_guide_request_style(row) if row else None
+
+
+def delete_tour_guide_request_style(conn: sqlite3.Connection, style_id: int) -> None:
+    conn.execute("DELETE FROM tour_guide_request_styles WHERE id = ?", (style_id,))
+    conn.commit()
+
+
+def list_all_tour_guide_request_styles(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT id, tour_name, label, created_at FROM tour_guide_request_styles ORDER BY created_at DESC"
+    ).fetchall()
 
 
 # --- Master data CRUD (thin helpers; Streamlit master pages call these) --------

@@ -43,6 +43,21 @@ class ItineraryVariant:
 
 
 @dataclass(frozen=True)
+class GuideRequestStyleVariant:
+    """A named, saved layout fix (cell fill/border/column-width/row-height,
+    no customer content) for the guide-request PPTX's itinerary table. A
+    tour can have several (e.g. bar-hopping's weekday vs weekend/holiday
+    plan each needing their own touched-up layout), picked from rather
+    than a single latest-wins override."""
+
+    id: int | None
+    tour_name: str
+    label: str
+    style_diff: dict = field(default_factory=dict)
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
 class SalesLine:
     """One row of the internal sheet's 支払内訳 (payment breakdown) table."""
 
@@ -103,6 +118,7 @@ class BookingRequest:
     guide_fee_shop_arrangement_bonus: bool = False  # bar-hopping only: guide books the shops (+1,000)
     guide_fee_adjustment: int = 0  # manual tweak (e.g. extra time for a hotel pickup)
     guide_fee_breakdown: str = ""  # e.g. "3時間 × 2,000円 = 6,000円 / 調整 +2,000円 / 合計 8,000円", shown on the guide request
+    guide_request_style_id: int | None = None  # chosen saved PPTX layout (see GuideRequestStyleVariant) -- routing only, not written to any document
     emergency_contact: str = TBD
 
     meeting_point_name: str = ""  # selected MeetingPoint master entry, if any (for photo lookup)

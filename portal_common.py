@@ -30,6 +30,7 @@ from tlst_automation.docgen.pdf_export import (  # noqa: E402
 )
 from tlst_automation.docgen.tour_workbook import generate_tour_workbook  # noqa: E402
 from tlst_automation.docgen import style_override  # noqa: E402
+from tlst_automation.docgen import pptx_style_override  # noqa: E402
 from tlst_automation.models import (  # noqa: E402
     BookingRequest,
     ItineraryStop,
@@ -542,6 +543,24 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
             st.session_state[variants_state_key] = db.list_tour_itinerary_variants(conn, tour_name)
             st.success(f"「{save_label}」を上書き保存しました。")
 
+    # Saved ガイド依頼書 layout fixes (see render_downloads' PPTX reupload
+    # section for how these get saved). Usually one pattern per tour, so
+    # that one is used automatically; only ask when there's more than one
+    # (e.g. bar-hopping's weekday vs weekend/holiday plan).
+    guide_request_styles = db.list_tour_guide_request_styles(conn, tour_name)
+    guide_request_style_id = None
+    if len(guide_request_styles) == 1:
+        guide_request_style_id = guide_request_styles[0].id
+        st.caption(f"ガイド依頼書のレイアウト「{guide_request_styles[0].label}」を自動で反映します。")
+    elif len(guide_request_styles) > 1:
+        style_options = [f"{s.label}｜{s.created_at[:10]}" for s in guide_request_styles]
+        picked_style = st.selectbox(
+            "ガイド依頼書のレイアウトパターンを選択（複数保存されています）",
+            style_options,
+            key=f"{key_prefix}_guide_request_style_picker",
+        )
+        guide_request_style_id = guide_request_styles[style_options.index(picked_style)].id
+
     return replace(
         booking,
         tour_name=tour_name,
@@ -568,6 +587,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         guide_fee_shop_arrangement_bonus=shop_arrangement_bonus,
         guide_fee_adjustment=int(guide_fee_adjustment),
         guide_fee_breakdown=guide_fee_breakdown,
+        guide_request_style_id=guide_request_style_id,
         emergency_contact=emergency_contact,
         meeting_point_name=meeting_point_choice if meeting_point_choice != "(カスタム入力)" else "",
         meeting_point_en=meeting_point_en,
@@ -609,9 +629,18 @@ def generate_documents(conn, updated: BookingRequest) -> None:
         if saved_style_diff:
             style_override.apply_style_diff(workbook_path, saved_style_diff)
         pptx_path = generate_guide_request(updated, out_dir / "guide_request.pptx")
+        saved_pptx_style = (
+            db.get_tour_guide_request_style(conn, updated.guide_request_style_id)
+            if updated.guide_request_style_id
+            else None
+        )
+        if saved_pptx_style:
+            pptx_style_override.apply_style_diff(pptx_path, saved_pptx_style.style_diff)
     st.success("Excel/PowerPointを生成しました。")
     if saved_style_diff:
         st.caption("このツアー用に保存済みのレイアウト調整を反映しました。")
+    if saved_pptx_style:
+        st.caption(f"ガイド依頼書に保存済みのレイアウト「{saved_pptx_style.label}」を反映しました。")
 
     internal_pdf = confirmation_pdf = guide_pdf = None
     try:
@@ -784,3 +813,24 @@ def render_downloads() -> None:
                 _render_pdf_preview(edited_guide_pdf, "ガイド依頼書（修正版）")
             except PdfExportError as exc:
                 st.error(f"PDF変換に失敗しました: {exc}")
+
+            st.caption(
+                f"このレイアウト（色・罫線・列幅など。お客様データは含みません）を「{tour_name}」用として保存すると、"
+                "次回以降このツアーを生成したときに反映されます（複数保存した場合は選べます。"
+                "バーホッピングの平日／休日パターンなど）。"
+            )
+            default_pptx_style_label = guide_request_filename(guide_name, tour_date, tour_name, "pptx").rsplit(".", 1)[0]
+            pptx_style_label = st.text_input(
+                "保存名", value=default_pptx_style_label, key="pptx_style_label"
+            )
+            if st.button("このレイアウトを保存する", key="save_pptx_style"):
+                try:
+                    resolved_diff = pptx_style_override.capture_style_diff(edited_pptx_path)
+                    if resolved_diff.get("cells") or resolved_diff.get("col_widths") or resolved_diff.get("row_heights"):
+                        conn = get_conn()
+                        db.save_tour_guide_request_style(conn, tour_name, pptx_style_label, resolved_diff)
+                        st.success(f"「{pptx_style_label}」として保存しました。")
+                    else:
+                        st.info("共通テンプレートとの差分が見つからなかったため、保存する内容がありませんでした。")
+                except Exception as exc:
+                    st.error(f"レイアウトの保存に失敗しました: {exc}")

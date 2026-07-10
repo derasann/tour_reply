@@ -370,6 +370,28 @@ else:
 
 st.divider()
 
+# --- ガイド依頼書レイアウトパターン --------------------------------------------
+st.header("ガイド依頼書のレイアウトパターン（保存済みの手直し）")
+st.caption(
+    "新規登録画面の「修正済みPowerPointを再アップロード」から保存した、ツアーごとの行程表の"
+    "色・罫線・列幅などの手直しの一覧です（お客様データは含みません）。バーホッピングの平日／休日"
+    "パターンなど、1つのツアーに複数保存できます。"
+)
+guide_request_styles = db.list_all_tour_guide_request_styles(conn)
+if not guide_request_styles:
+    st.caption("まだ保存されたレイアウトパターンはありません。")
+else:
+    for row in guide_request_styles:
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.write(f"**{row['tour_name']}**　「{row['label']}」（保存日: {row['created_at'][:10]}）")
+        with col2:
+            if st.button("削除", key=f"delete_guide_request_style_{row['id']}"):
+                db.delete_tour_guide_request_style(conn, row["id"])
+                st.rerun()
+
+st.divider()
+
 # --- 過去のBooking Confirmationからの取込 -------------------------------------
 st.header("過去のBooking Confirmationから集合場所・Inclusions/Exclusionsを取り込む")
 st.caption(
