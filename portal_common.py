@@ -796,15 +796,28 @@ def render_downloads() -> None:
             st.download_button("ガイド依頼書PDF", p.read_bytes(), file_name=name, key="dl_guide_pdf")
             _render_pdf_preview(p, "ガイド依頼書")
 
-        st.caption("PowerPointをデスクトップで手直しした場合は、ここに再アップロードするとそのファイルからPDFを作り直せます。")
-        uploaded_pptx = st.file_uploader("修正済みPowerPointを再アップロード", type=["pptx"], key="reupload_pptx")
-        if uploaded_pptx is not None:
+        st.caption(
+            "PowerPointをデスクトップで手直しした場合は、ここに再アップロードするとそのファイルからPDFを作り直せます"
+            "（PDFを直接アップロードした場合はそのままダウンロード・プレビューに使えますが、"
+            "レイアウトの保存はPowerPointの場合のみ対応しています）。"
+        )
+        uploaded_guide_file = st.file_uploader(
+            "修正済みPowerPointまたはPDFを再アップロード", type=["pptx", "pdf"], key="reupload_pptx"
+        )
+        if uploaded_guide_file is not None:
             out_dir = _booking_out_dir(generated)
-            edited_pptx_path = out_dir / "guide_request_edited.pptx"
-            edited_pptx_path.write_bytes(uploaded_pptx.getvalue())
+            is_pptx = uploaded_guide_file.name.lower().endswith(".pptx")
+            edited_pptx_path = None
             try:
-                edited_guide_pdf = convert_to_pdf(edited_pptx_path, out_dir)
-                st.success("修正済みPowerPointからPDFを作り直しました。")
+                if is_pptx:
+                    edited_pptx_path = out_dir / "guide_request_edited.pptx"
+                    edited_pptx_path.write_bytes(uploaded_guide_file.getvalue())
+                    edited_guide_pdf = convert_to_pdf(edited_pptx_path, out_dir)
+                    st.success("修正済みPowerPointからPDFを作り直しました。")
+                else:
+                    edited_guide_pdf = out_dir / "guide_request_edited.pdf"
+                    edited_guide_pdf.write_bytes(uploaded_guide_file.getvalue())
+                    st.success("アップロードされたPDFを使います。")
                 st.download_button(
                     "ガイド依頼書PDF（修正版）", edited_guide_pdf.read_bytes(),
                     file_name=guide_request_filename(guide_name, tour_date, tour_name, "pdf"),
@@ -814,23 +827,28 @@ def render_downloads() -> None:
             except PdfExportError as exc:
                 st.error(f"PDF変換に失敗しました: {exc}")
 
-            st.caption(
-                f"このレイアウト（色・罫線・列幅など。お客様データは含みません）を「{tour_name}」用として保存すると、"
-                "次回以降このツアーを生成したときに反映されます（複数保存した場合は選べます。"
-                "バーホッピングの平日／休日パターンなど）。"
-            )
-            default_pptx_style_label = guide_request_filename(guide_name, tour_date, tour_name, "pptx").rsplit(".", 1)[0]
-            pptx_style_label = st.text_input(
-                "保存名", value=default_pptx_style_label, key="pptx_style_label"
-            )
-            if st.button("このレイアウトを保存する", key="save_pptx_style"):
-                try:
-                    resolved_diff = pptx_style_override.capture_style_diff(edited_pptx_path)
-                    if resolved_diff.get("cells") or resolved_diff.get("col_widths") or resolved_diff.get("row_heights"):
-                        conn = get_conn()
-                        db.save_tour_guide_request_style(conn, tour_name, pptx_style_label, resolved_diff)
-                        st.success(f"「{pptx_style_label}」として保存しました。")
-                    else:
-                        st.info("共通テンプレートとの差分が見つからなかったため、保存する内容がありませんでした。")
-                except Exception as exc:
-                    st.error(f"レイアウトの保存に失敗しました: {exc}")
+            if is_pptx:
+                st.caption(
+                    f"このレイアウト（色・罫線・列幅など。お客様データは含みません）を「{tour_name}」用として保存すると、"
+                    "次回以降このツアーを生成したときに反映されます（複数保存した場合は選べます。"
+                    "バーホッピングの平日／休日パターンなど）。"
+                )
+                default_pptx_style_label = guide_request_filename(guide_name, tour_date, tour_name, "pptx").rsplit(".", 1)[0]
+                pptx_style_label = st.text_input(
+                    "保存名", value=default_pptx_style_label, key="pptx_style_label"
+                )
+                if st.button("このレイアウトを保存する", key="save_pptx_style"):
+                    try:
+                        resolved_diff = pptx_style_override.capture_style_diff(
+                            edited_pptx_path, base_path=generated["pptx_path"]
+                        )
+                        if resolved_diff.get("cells") or resolved_diff.get("col_widths") or resolved_diff.get("row_heights"):
+                            conn = get_conn()
+                            db.save_tour_guide_request_style(conn, tour_name, pptx_style_label, resolved_diff)
+                            st.success(f"「{pptx_style_label}」として保存しました。")
+                        else:
+                            st.info("元のファイルとの差分が見つからなかったため、保存する内容がありませんでした。")
+                    except Exception as exc:
+                        st.error(f"レイアウトの保存に失敗しました: {exc}")
+            else:
+                st.caption("PDFからはレイアウトの保存はできません。レイアウトも保存したい場合はPowerPointをアップロードしてください。")

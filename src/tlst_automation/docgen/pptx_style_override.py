@@ -32,6 +32,7 @@ _TCPR_RE = re.compile(r"<a:tcPr\b[^>]*>.*?</a:tcPr>|<a:tcPr\b[^>]*/>", re.S)
 _GRID_RE = re.compile(r"<a:tblGrid>.*?</a:tblGrid>", re.S)
 _GRIDCOL_RE = re.compile(r"<a:gridCol\b[^>]*(?:/>|>.*?</a:gridCol>)", re.S)
 _ROW_HEIGHT_RE = re.compile(r'<a:tr h="(\d+)"')
+_TEXT_RUN_RE = re.compile(r"<a:t>(.*?)</a:t>", re.S)
 
 
 def _load_zip(path: Path) -> dict[str, bytes]:
@@ -70,27 +71,59 @@ def _col_widths(tbl_xml: str) -> list[int]:
     return [int(w) for w in re.findall(r'w="(\d+)"', grid_match.group(0))]
 
 
+def _cell_text(cell_xml: str) -> str:
+    return "".join(_TEXT_RUN_RE.findall(cell_xml)).strip()
+
+
+def _is_blank_row(cells: list[str]) -> bool:
+    return not any(_cell_text(c) for c in cells)
+
+
 class StyleDiffError(ValueError):
     pass
 
 
-def capture_style_diff(fixed_path: str | Path) -> dict:
-    """Diff `fixed_path` (a user's manually-corrected copy of a generated
-    guide-request PPTX) against the shared base template's itinerary
-    table, cell by cell, and return only what differs: cell tcPr blocks
-    (fill/border/margins), column widths, and row heights.
+def _match_rows(base_rows: list[str], fixed_rows: list[str]) -> list[tuple[int, int]]:
+    """Pair up (base_row_idx, fixed_row_idx) for content rows only (the
+    header row plus any row with real itinerary text), each matched in
+    their original relative order, even if rows were added/removed in the
+    fixed file.
 
-    Cells are matched purely by (row index, column index) in table order,
-    since PPTX table cells don't carry any stable ID of their own. That
-    only stays correct if the fixed file has the exact same table shape
-    as the template it was generated from -- if rows were added/deleted/
-    merged differently while "fixing" it in PowerPoint (e.g. deleting the
-    template's many unused blank itinerary rows), every row after the
-    change lines up with the wrong template row, silently producing a
-    diff that misapplies borders/fills to the wrong cells later. Raise
-    instead of returning a subtly-wrong diff.
+    This assumes the itinerary's actual content rows are never deleted or
+    reordered while "fixing" formatting in PowerPoint (only its many unused
+    *blank* rows might be trimmed) -- a safe assumption since deleting a
+    content row would destroy real itinerary data, not just its styling.
+    Position-only matching (the previous approach) broke as soon as a
+    single row was removed, silently shifting every later row's
+    correspondence and misapplying borders to the wrong cells.
+
+    Blank rows are deliberately NOT matched/diffed at all: the template's
+    blank filler rows aren't all styled identically to begin with (e.g.
+    the very last row has different borders than one in the middle), so
+    pairing them up by order alone produces false-positive diffs of
+    template artifacts rather than real user fixes.
     """
-    base_parts = _load_zip(TEMPLATE_PATH)
+    base_content = [i for i, row in enumerate(base_rows) if not _is_blank_row([m.group(0) for m in _CELL_RE.finditer(row)])]
+    fixed_content = [i for i, row in enumerate(fixed_rows) if not _is_blank_row([m.group(0) for m in _CELL_RE.finditer(row)])]
+    return list(zip(base_content, fixed_content))
+
+
+def capture_style_diff(fixed_path: str | Path, base_path: str | Path | None = None) -> dict:
+    """Diff `fixed_path` (a user's manually-corrected copy of a generated
+    guide-request PPTX) against `base_path` (the original, freshly-generated
+    file for that same booking -- falls back to the shared blank template
+    if not given, though that only lets content rows' styling be captured
+    when compared against another real booking's generation, since the
+    blank template has no content rows of its own to match against).
+
+    Cell correspondence is content-aware (see _match_rows), not raw
+    position, so deleting the template's many unused blank itinerary rows
+    while cleaning up the file in PowerPoint -- the normal way to shorten
+    it -- doesn't misattribute a later row's style fix to the wrong cell.
+    Column count per matched row must still match, since cells being
+    merged/split differently is much rarer and harder to align safely.
+    """
+    base_parts = _load_zip(Path(base_path) if base_path else TEMPLATE_PATH)
     fixed_parts = _load_zip(Path(fixed_path))
     base_slide = base_parts[SLIDE_PART].decode("utf-8")
     fixed_slide = fixed_parts[SLIDE_PART].decode("utf-8")
@@ -103,21 +136,17 @@ def capture_style_diff(fixed_path: str | Path) -> dict:
 
     base_rows = [m.group(0) for m in _ROW_RE.finditer(base_tbl)]
     fixed_rows = [m.group(0) for m in _ROW_RE.finditer(fixed_tbl)]
-
-    if len(base_rows) != len(fixed_rows):
-        raise StyleDiffError(
-            f"行程表の行数がテンプレートと異なります（テンプレート{len(base_rows)}行 / "
-            f"アップロードされたファイル{len(fixed_rows)}行）。PowerPoint上で行の追加・削除・"
-            "結合を行わず、色や罫線などの見た目だけを変更してから再度アップロードしてください。"
-        )
+    row_pairs = _match_rows(base_rows, fixed_rows)
 
     cells: dict[str, str] = {}
-    for row_idx, (base_row, fixed_row) in enumerate(zip(base_rows, fixed_rows)):
+    row_heights: dict[str, str] = {}
+    for base_row_idx, fixed_row_idx in row_pairs:
+        base_row, fixed_row = base_rows[base_row_idx], fixed_rows[fixed_row_idx]
         base_cells = [m.group(0) for m in _CELL_RE.finditer(base_row)]
         fixed_cells = [m.group(0) for m in _CELL_RE.finditer(fixed_row)]
         if len(base_cells) != len(fixed_cells):
             raise StyleDiffError(
-                f"行程表の{row_idx + 1}行目の列数がテンプレートと異なります。PowerPoint上でセルの結合・"
+                f"行程表の{fixed_row_idx + 1}行目の列数がテンプレートと異なります。PowerPoint上でセルの結合・"
                 "分割を行わず、色や罫線などの見た目だけを変更してから再度アップロードしてください。"
             )
         for col_idx, (base_cell, fixed_cell) in enumerate(zip(base_cells, fixed_cells)):
@@ -126,22 +155,20 @@ def capture_style_diff(fixed_path: str | Path) -> dict:
             base_tcpr = base_tcpr_match.group(0) if base_tcpr_match else ""
             fixed_tcpr = fixed_tcpr_match.group(0) if fixed_tcpr_match else ""
             if base_tcpr != fixed_tcpr:
-                cells[f"{row_idx}:{col_idx}"] = fixed_tcpr
+                cells[f"{base_row_idx}:{col_idx}"] = fixed_tcpr
+
+        base_h_match = _ROW_HEIGHT_RE.match(base_row)
+        fixed_h_match = _ROW_HEIGHT_RE.match(fixed_row)
+        base_h = base_h_match.group(1) if base_h_match else None
+        fixed_h = fixed_h_match.group(1) if fixed_h_match else None
+        if fixed_h is not None and fixed_h != base_h:
+            row_heights[str(base_row_idx)] = fixed_h
 
     base_widths = _col_widths(base_tbl)
     fixed_widths = _col_widths(fixed_tbl)
     col_widths = {
         str(i): fw for i, (bw, fw) in enumerate(zip(base_widths, fixed_widths)) if bw != fw
     }
-
-    row_heights: dict[str, str] = {}
-    for row_idx, (base_row, fixed_row) in enumerate(zip(base_rows, fixed_rows)):
-        base_h_match = _ROW_HEIGHT_RE.match(base_row)
-        fixed_h_match = _ROW_HEIGHT_RE.match(fixed_row)
-        base_h = base_h_match.group(1) if base_h_match else None
-        fixed_h = fixed_h_match.group(1) if fixed_h_match else None
-        if fixed_h is not None and fixed_h != base_h:
-            row_heights[str(row_idx)] = fixed_h
 
     return {"cells": cells, "col_widths": col_widths, "row_heights": row_heights}
 
