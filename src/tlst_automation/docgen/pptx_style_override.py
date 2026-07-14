@@ -29,6 +29,7 @@ _TBL_RE = re.compile(r"<a:tbl>.*?</a:tbl>", re.S)
 _ROW_RE = re.compile(r"<a:tr\b[^>]*>.*?</a:tr>", re.S)
 _CELL_RE = re.compile(r"<a:tc\b[^>]*>.*?</a:tc>|<a:tc\b[^>]*/>", re.S)
 _TCPR_RE = re.compile(r"<a:tcPr\b[^>]*>.*?</a:tcPr>|<a:tcPr\b[^>]*/>", re.S)
+_RPR_RE = re.compile(r"<a:rPr\b[^>]*>.*?</a:rPr>|<a:rPr\b[^>]*/>", re.S)
 _GRID_RE = re.compile(r"<a:tblGrid>.*?</a:tblGrid>", re.S)
 _GRIDCOL_RE = re.compile(r"<a:gridCol\b[^>]*(?:/>|>.*?</a:gridCol>)", re.S)
 _ROW_HEIGHT_RE = re.compile(r'<a:tr h="(\d+)"')
@@ -131,7 +132,7 @@ def capture_style_diff(fixed_path: str | Path, base_path: str | Path | None = No
     base_tbl_match = _TBL_RE.search(base_slide)
     fixed_tbl_match = _TBL_RE.search(fixed_slide)
     if not base_tbl_match or not fixed_tbl_match:
-        return {"cells": {}, "col_widths": {}, "row_heights": {}}
+        return {"cells": {}, "fonts": {}, "col_widths": {}, "row_heights": {}}
     base_tbl, fixed_tbl = base_tbl_match.group(0), fixed_tbl_match.group(0)
 
     base_rows = [m.group(0) for m in _ROW_RE.finditer(base_tbl)]
@@ -139,6 +140,7 @@ def capture_style_diff(fixed_path: str | Path, base_path: str | Path | None = No
     row_pairs = _match_rows(base_rows, fixed_rows)
 
     cells: dict[str, str] = {}
+    fonts: dict[str, str] = {}
     row_heights: dict[str, str] = {}
     for base_row_idx, fixed_row_idx in row_pairs:
         base_row, fixed_row = base_rows[base_row_idx], fixed_rows[fixed_row_idx]
@@ -157,6 +159,13 @@ def capture_style_diff(fixed_path: str | Path, base_path: str | Path | None = No
             if base_tcpr != fixed_tcpr:
                 cells[f"{base_row_idx}:{col_idx}"] = fixed_tcpr
 
+            base_rpr_match = _RPR_RE.search(base_cell)
+            fixed_rpr_match = _RPR_RE.search(fixed_cell)
+            base_rpr = base_rpr_match.group(0) if base_rpr_match else ""
+            fixed_rpr = fixed_rpr_match.group(0) if fixed_rpr_match else ""
+            if base_rpr != fixed_rpr and fixed_rpr:
+                fonts[f"{base_row_idx}:{col_idx}"] = fixed_rpr
+
         base_h_match = _ROW_HEIGHT_RE.match(base_row)
         fixed_h_match = _ROW_HEIGHT_RE.match(fixed_row)
         base_h = base_h_match.group(1) if base_h_match else None
@@ -170,7 +179,7 @@ def capture_style_diff(fixed_path: str | Path, base_path: str | Path | None = No
         str(i): fw for i, (bw, fw) in enumerate(zip(base_widths, fixed_widths)) if bw != fw
     }
 
-    return {"cells": cells, "col_widths": col_widths, "row_heights": row_heights}
+    return {"cells": cells, "fonts": fonts, "col_widths": col_widths, "row_heights": row_heights}
 
 
 def apply_style_diff(pptx_path: str | Path, diff: dict) -> None:
@@ -188,6 +197,7 @@ def apply_style_diff(pptx_path: str | Path, diff: dict) -> None:
     tbl_xml = tbl_match.group(0)
 
     cell_overrides = diff.get("cells", {})
+    font_overrides = diff.get("fonts", {})
     row_height_overrides = diff.get("row_heights", {})
 
     row_matches = list(_ROW_RE.finditer(tbl_xml))
@@ -197,17 +207,26 @@ def apply_style_diff(pptx_path: str | Path, diff: dict) -> None:
         cell_matches = list(_CELL_RE.finditer(row_xml))
         cell_replacements: list[tuple[int, int, str]] = []
         for col_idx, cell_match in enumerate(cell_matches):
+            cell_xml = cell_match.group(0)
+
             new_tcpr = cell_overrides.get(f"{row_idx}:{col_idx}")
-            if new_tcpr is None:
-                continue
-            tcpr_match = _TCPR_RE.search(cell_match.group(0))
-            if tcpr_match:
-                cell_replacements.append(
-                    (cell_match.start() + tcpr_match.start(), cell_match.start() + tcpr_match.end(), new_tcpr)
-                )
-            elif new_tcpr:
-                insert_at = cell_match.end() - len("</a:tc>")
-                cell_replacements.append((insert_at, insert_at, new_tcpr))
+            if new_tcpr is not None:
+                tcpr_match = _TCPR_RE.search(cell_xml)
+                if tcpr_match:
+                    cell_replacements.append(
+                        (cell_match.start() + tcpr_match.start(), cell_match.start() + tcpr_match.end(), new_tcpr)
+                    )
+                elif new_tcpr:
+                    insert_at = cell_match.end() - len("</a:tc>")
+                    cell_replacements.append((insert_at, insert_at, new_tcpr))
+
+            new_rpr = font_overrides.get(f"{row_idx}:{col_idx}")
+            if new_rpr:
+                rpr_match = _RPR_RE.search(cell_xml)
+                if rpr_match:
+                    cell_replacements.append(
+                        (cell_match.start() + rpr_match.start(), cell_match.start() + rpr_match.end(), new_rpr)
+                    )
 
         new_row_xml = _replace_spans(row_xml, cell_replacements)
 

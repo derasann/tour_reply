@@ -854,7 +854,12 @@ def render_downloads() -> None:
                         resolved_diff = pptx_style_override.capture_style_diff(
                             edited_pptx_path, base_path=generated["pptx_path"]
                         )
-                        if resolved_diff.get("cells") or resolved_diff.get("col_widths") or resolved_diff.get("row_heights"):
+                        if (
+                            resolved_diff.get("cells")
+                            or resolved_diff.get("fonts")
+                            or resolved_diff.get("col_widths")
+                            or resolved_diff.get("row_heights")
+                        ):
                             conn = get_conn()
                             db.save_tour_guide_request_style(conn, tour_name, pptx_style_label, resolved_diff)
                             st.success(f"「{pptx_style_label}」として保存しました。")
