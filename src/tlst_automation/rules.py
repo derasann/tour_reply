@@ -296,3 +296,41 @@ def _parse_iso_date(raw_date: str) -> date | None:
         except ValueError:
             continue
     return None
+
+
+# --- Itinerary "支払額" (payment label) auto-scaling to guest count ----------
+# A stopover's payment_label is free text like "@341円×4+1" (per-guest unit
+# price × guest count, "+1" for the guide's own item at the same price) or
+# "1,000円×2台" (taxi: yen-per-vehicle × vehicle count). Saved itinerary
+# patterns/AI extractions carry whatever guest count the *source* booking
+# had, so reusing one for a booking with a different pax silently leaves
+# a stale multiplier unless it's rewritten to match. Only the "×N" guest/
+# vehicle-count multiplier is ever rewritten -- unit prices, a flat "+1" or
+# "+1,000円" guide addition, and wording with no "×" at all (e.g. "600円
+# （グループで1個）", a flat per-group price) are left exactly as written.
+TAXI_GROUP_CAPACITY = 3  # guide + guests combined, per vehicle
+
+_PAYMENT_MULTIPLIER_RE = re.compile(r"([×xX])(\s*)(\d+)(\s*)(台)?")
+
+
+def taxi_vehicle_count(pax: int) -> int:
+    """Guide + guests combined: 1 vehicle up to TAXI_GROUP_CAPACITY, else 2
+    (this tour operation has never needed a 3rd vehicle in practice)."""
+    return 1 if (pax + 1) <= TAXI_GROUP_CAPACITY else 2
+
+
+def rewrite_payment_label_for_pax(label: str, pax: int) -> str:
+    """Rewrite a payment_label's "×N" guest-count multiplier to match
+    `pax` (or, when followed by "台", to the taxi_vehicle_count for `pax`),
+    leaving everything else -- unit prices, "+1"/"+1,000円" guide
+    additions, flat group-price wording -- untouched."""
+    if not label:
+        return label
+
+    def _replace(match: re.Match[str]) -> str:
+        mult_char, pre_space, _num, post_space, unit = match.groups()
+        new_num = taxi_vehicle_count(pax) if unit else pax
+        return f"{mult_char}{pre_space}{new_num}{post_space}{unit or ''}"
+
+    return _PAYMENT_MULTIPLIER_RE.sub(_replace, label)
+    return None

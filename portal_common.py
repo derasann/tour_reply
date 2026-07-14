@@ -151,6 +151,18 @@ def combine_uploaded_texts(uploaded_files) -> str:
     return "\n\n".join(f"----- {name} -----\n{text}" for _, _, name, text in parts)
 
 
+def _rewrite_stops_for_pax(stops: list[ItineraryStop], pax: int) -> list[ItineraryStop]:
+    """Rewrite each stop's 支払額 guest/vehicle-count multiplier to match
+    `pax` (see rules.rewrite_payment_label_for_pax) -- applied whenever an
+    itinerary (freshly extracted or a saved pattern) is loaded into the
+    form, so a pattern saved for a different party size doesn't show a
+    stale multiplier."""
+    return [
+        replace(stop, payment_label=rules.rewrite_payment_label_for_pax(stop.payment_label, pax))
+        for stop in stops
+    ]
+
+
 def itinerary_to_df(stops: list[ItineraryStop]) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -462,10 +474,10 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
     if st.session_state.get(tour_name_state_key) != tour_name:
         st.session_state[tour_name_state_key] = tour_name
         if booking.tour_name == tour_name and booking.itinerary:
-            st.session_state[df_state_key] = itinerary_to_df(booking.itinerary)
+            st.session_state[df_state_key] = itinerary_to_df(_rewrite_stops_for_pax(booking.itinerary, pax))
             st.session_state[variant_id_state_key] = None
         elif variants:
-            st.session_state[df_state_key] = itinerary_to_df(variants[0].itinerary)
+            st.session_state[df_state_key] = itinerary_to_df(_rewrite_stops_for_pax(variants[0].itinerary, pax))
             st.session_state[variant_id_state_key] = variants[0].id
             st.info(
                 f"「{tour_name}」の行程パターンが{len(variants)}件見つかりました。"
@@ -484,7 +496,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
             loaded_key = f"{key_prefix}_variant_loaded"
             if st.session_state.get(loaded_key) != picked_variant.id:
                 st.session_state[loaded_key] = picked_variant.id
-                st.session_state[df_state_key] = itinerary_to_df(picked_variant.itinerary)
+                st.session_state[df_state_key] = itinerary_to_df(_rewrite_stops_for_pax(picked_variant.itinerary, pax))
                 st.session_state[variant_id_state_key] = picked_variant.id
 
     # Fallback/override: browse ANY saved tour's patterns by name, in case
@@ -506,7 +518,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
                 manual_picked_label = st.selectbox("行程パターン", manual_options, key=f"{key_prefix}_itinerary_manual_variant")
                 manual_picked_variant = manual_variants[manual_options.index(manual_picked_label)]
                 if st.button("この行程を読み込む", key=f"{key_prefix}_itinerary_manual_load"):
-                    st.session_state[df_state_key] = itinerary_to_df(manual_picked_variant.itinerary)
+                    st.session_state[df_state_key] = itinerary_to_df(_rewrite_stops_for_pax(manual_picked_variant.itinerary, pax))
                     st.session_state[variant_id_state_key] = manual_picked_variant.id
                     st.session_state[manual_label_key] = manual_picked_variant.label
                     st.rerun()

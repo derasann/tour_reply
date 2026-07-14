@@ -25,7 +25,7 @@ from pptx import Presentation
 from pptx.util import Pt
 
 from ..models import BookingRequest, ItineraryStop
-from ..rules import format_dietary_for_guide_request, tba, tbd
+from ..rules import format_dietary_for_guide_request, rewrite_payment_label_for_pax, tba, tbd
 
 TEMPLATE_PATH = (
     Path(__file__).resolve().parent.parent.parent.parent / "templates" / "guide_request_template.pptx"
@@ -140,7 +140,13 @@ def _fill_itinerary_table(slide, booking: BookingRequest) -> None:
         row = table.rows[ITINERARY_HEADER_ROWS + row_offset]
         stop = stops[row_offset] if row_offset < len(stops) else None
         values = (
-            (stop.time_label, stop.stopover_name, stop.payment_label, stop.payment_method, stop.stopover_info)
+            (
+                stop.time_label,
+                stop.stopover_name,
+                rewrite_payment_label_for_pax(stop.payment_label, booking.pax),
+                stop.payment_method,
+                stop.stopover_info,
+            )
             if stop
             else ("", "", "", "", "")
         )
