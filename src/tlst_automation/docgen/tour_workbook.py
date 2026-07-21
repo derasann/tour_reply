@@ -188,16 +188,18 @@ def _fill_sheet2(xml: str, booking: BookingRequest) -> str:
             pass
 
     xml = xl.set_inline_string(xml, "E16", booking.guide_name_romaji or booking.guide_name)
-    xml = xl.set_inline_string(
-        xml, "F16", f"Emargency Contact:{booking.emergency_contact}  (Mobile/WhatsAPP)"
-    )
+    # F16 used to show "Emargency Contact: ..." next to the guide's name, but
+    # that's internal-use info (小野寺's own mobile + guide messenger thread)
+    # that doesn't belong on a customer-facing Booking Confirmation.
+    xml = xl.set_inline_string(xml, "F16", "")
     xml = xl.set_inline_string(xml, "E17", booking.guide_mobile)
     xml = xl.set_inline_string(xml, "E18", booking.meeting_point_en or tba(None))
     xml = xl.set_inline_string(xml, "F18", booking.meeting_point_jp or tba(None))
     return xml
 
 
-INCLUSION_SLOT_COUNT = 5  # <a:t> runs 5..9 in drawing2.xml -- the fixed number of
+INCLUSION_SLOT_COUNT = 5  # template's own runs 5..9 in drawing2.xml (see _fill_drawing2
+# for why the actual indices used there are +1, 6..10) -- the fixed number of
 # "What's Included" lines the template's textbox has room for.
 
 _BULLET_PREFIX_RE = re.compile(r"^[\-・•*]\s*")
@@ -210,9 +212,41 @@ def _strip_bullet(text: str) -> str:
     return _BULLET_PREFIX_RE.sub("", text.strip())
 
 
+# A bold, centered "** Private tour **" / "** Group tour **" banner, inserted
+# as a whole new paragraph right before the existing "Dietary requirement"
+# paragraph (there's no template slot for it -- unlike the runs above, this
+# text doesn't exist in the template at all until we add it here). Matches
+# the same font styling (Arial, bold, 1100) as the rest of the box.
+_TOUR_TYPE_PARAGRAPH_TEMPLATE = (
+    '<a:p><a:pPr indent="0" lvl="0" marL="0" marR="0" rtl="0" algn="ctr">'
+    '<a:lnSpc><a:spcPct val="100000"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef>'
+    '<a:spcAft><a:spcPts val="0"/></a:spcAft><a:buClr><a:schemeClr val="dk1"/></a:buClr>'
+    '<a:buSzPts val="1100"/><a:buFont typeface="Calibri"/><a:buNone/></a:pPr>'
+    '<a:r><a:rPr b="1" lang="en-US" sz="1100"><a:solidFill><a:schemeClr val="dk1"/></a:solidFill>'
+    '<a:latin typeface="Arial"/><a:ea typeface="Arial"/><a:cs typeface="Arial"/><a:sym typeface="Arial"/></a:rPr>'
+    "<a:t>{text}</a:t></a:r><a:endParaRPr sz=\"1100\"/></a:p>"
+)
+
+
+def _tour_type_banner_text(booking: BookingRequest) -> str:
+    return "** Private tour **" if booking.tour_type.upper() == "PV" else "** Group tour **"
+
+
+def _insert_tour_type_banner(xml: str, booking: BookingRequest) -> str:
+    anchor = "<a:lstStyle/>"
+    insert_at = xml.index(anchor) + len(anchor)
+    paragraph = _TOUR_TYPE_PARAGRAPH_TEMPLATE.format(text=_tour_type_banner_text(booking))
+    return xml[:insert_at] + paragraph + xml[insert_at:]
+
+
 def _fill_drawing2(xml: str, booking: BookingRequest) -> str:
+    # Inserting this banner as a whole new paragraph adds one <a:t> run ahead
+    # of every run the template already had, so every run index below is
+    # shifted by +1 versus the template's own original numbering (see the
+    # INCLUSION_SLOT_COUNT comment above for those original indices).
+    xml = _insert_tour_type_banner(xml, booking)
     dietary = format_dietary_for_confirmation(booking.dietary)
-    xml = xl.replace_drawing_text_run(xml, 1, dietary)
+    xml = xl.replace_drawing_text_run(xml, 2, dietary)
 
     # Fixed number of template slots, but a tour's real inclusion list (from
     # the Tour master / tariff) can be shorter or longer -- always overwrite
@@ -226,14 +260,14 @@ def _fill_drawing2(xml: str, booking: BookingRequest) -> str:
     lines = [f"-{item}" for item in inclusions]
     lines += [""] * (INCLUSION_SLOT_COUNT - len(lines))
     for offset, text in enumerate(lines):
-        xml = xl.replace_drawing_text_run(xml, 5 + offset, text)
+        xml = xl.replace_drawing_text_run(xml, 6 + offset, text)
 
     # Only one "NOT Included" slot exists in the template -- join every
     # exclusion into it rather than showing just the first and dropping
     # the rest (or leaving the old sample line if there are none).
     exclusions = [_strip_bullet(item) for item in booking.exclusions if item.strip()]
     exclusion_text = f"・{'; '.join(exclusions)}" if exclusions else ""
-    xml = xl.replace_drawing_text_run(xml, 12, exclusion_text)
+    xml = xl.replace_drawing_text_run(xml, 13, exclusion_text)
 
     return xml
 

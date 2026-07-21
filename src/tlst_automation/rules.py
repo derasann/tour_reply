@@ -124,6 +124,29 @@ def bar_hop_guide_fee_addon(shop_count: int) -> int:
     return WEEKDAY_EXTRA_SHOP_GUIDE_FEE if shop_count == WEEKDAY_SHOP_COUNT else 0
 
 
+# Marker a bar-hopping tour's saved itinerary can use in a stop's payment_label
+# (in place of typing out the whole 1-4 guest breakdown by hand) -- see
+# guide_request.py's _fill_itinerary_table, which expands this marker into
+# bar_hop_food_budget_table_text() at generation time. Centralizing this in
+# rules.py means every bar-hopping tour's guide request stays in sync if the
+# per-shop food price or guide drink price ever changes, instead of each
+# saved itinerary having its own hand-typed (and easily stale) copy.
+BAR_HOP_FOOD_BUDGET_MARKER = "ガイド飲食等含む"
+
+
+def bar_hop_food_budget_table_text(max_pax: int = 4) -> str:
+    """Renders bar_hop_food_budget() for 1..max_pax guests as the
+    per-headcount reference table guides use on the printed itinerary
+    (amounts right-aligned so all four lines' yen figures line up)."""
+    amounts = [f"{bar_hop_food_budget(pax)[0]:,}" for pax in range(1, max_pax + 1)]
+    width = max(len(amount) for amount in amounts)
+    lines = [BAR_HOP_FOOD_BUDGET_MARKER, ""]
+    for pax, amount in enumerate(amounts, start=1):
+        padding = "　" * (width - len(amount))
+        lines.append(f"{pax}名の場合{padding}{amount}円")
+    return "\n".join(lines)
+
+
 def apply_bar_hop_rule(tour_name: str, tour_date: str, pax: int) -> dict[str, object] | None:
     """Return shop-count/food-budget/guide-fee-addon/notice info for the
     guide request, or None if this isn't a bar-hop tour. Does not affect

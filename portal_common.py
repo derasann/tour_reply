@@ -35,7 +35,7 @@ from tlst_automation.models import (  # noqa: E402
     BookingRequest,
     ItineraryStop,
 )
-from tlst_automation import rules  # noqa: E402
+from tlst_automation import pricing, rules  # noqa: E402
 from tlst_automation.rules import tbd  # noqa: E402
 
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
@@ -286,7 +286,30 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         booking_no = st.text_input("予約番号（社内管理用）", value=booking.booking_no or ref_no, key=f"{key_prefix}_booking_no")
         status = st.text_input("予約状況", value=booking.status or "予約受付", key=f"{key_prefix}_status")
         payment_status = st.text_input("入金状況", value=booking.payment_status or "入金待ち", key=f"{key_prefix}_payment_status")
-        assignee_1st = st.text_input("担当者(1st)", value=booking.assignee_1st, key=f"{key_prefix}_assignee_1st")
+
+        # Defaults to booking.amount -- which by now (see ai_extractor.py's
+        # rule 8) is the CONFIRMED amount the agent thread itself states
+        # when there is one, since that already accounts for ad hoc
+        # surcharges, minimum-charge policies, etc. that the tariff-table
+        # formula below can't. The formula is shown only as a reference
+        # caption, never auto-applied over what was actually extracted/
+        # already entered -- amount stays a plain editable number so a
+        # manual override can't end up as text and break the internal
+        # sheet's SUM/percentage formulas downstream (#VALUE! errors).
+        amount = st.number_input(
+            "金額（税込・売上額）", min_value=0,
+            value=int(booking.amount or 0),
+            step=100, key=f"{key_prefix}_amount",
+        )
+        try:
+            computed_amount, computed_formula = pricing.calculate_amount(
+                tour_name, pax, agent_type=booking.agent_type, tour_type=booking.tour_type
+            )
+            st.caption(f"参考（現在のツアー名・人数でタリフ表から自動計算した場合）: {computed_formula}")
+        except pricing.PricingError as exc:
+            st.caption(f"参考: タリフ表からは自動計算できません（{exc}）。上の金額はメール記載額または手入力です。")
+
+        assignee_1st = st.text_input("担当者(1st)", value=booking.assignee_1st or "小野寺", key=f"{key_prefix}_assignee_1st")
         guide_last_key = f"{key_prefix}_guide_choice_last"
         if guide_last_key not in st.session_state:
             # Seed with the booking's own guide so this doesn't look like a
@@ -590,6 +613,7 @@ def render_booking_form(conn, booking: BookingRequest, *, key_prefix: str) -> Bo
         booking_no=booking_no,
         status=status,
         payment_status=payment_status,
+        amount=int(amount),
         assignee_1st=assignee_1st,
         guide_name=guide_choice if guide_choice != "(TBA)" else "TBA",
         guide_name_romaji=guide_name_romaji,

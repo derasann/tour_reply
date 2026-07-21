@@ -84,29 +84,52 @@ class StyleDiffError(ValueError):
     pass
 
 
+def _row_cell_texts(row_xml: str) -> tuple[str, ...]:
+    return tuple(_cell_text(m.group(0)) for m in _CELL_RE.finditer(row_xml))
+
+
 def _match_rows(base_rows: list[str], fixed_rows: list[str]) -> list[tuple[int, int]]:
-    """Pair up (base_row_idx, fixed_row_idx) for content rows only (the
-    header row plus any row with real itinerary text), each matched in
-    their original relative order, even if rows were added/removed in the
-    fixed file.
+    """Pair up (base_row_idx, fixed_row_idx) for content rows only (any row
+    with real itinerary text), matched by each row's actual cell TEXT
+    (stopover name, time, payment info -- whatever the row's content is),
+    not by ordinal position among non-blank rows.
 
-    This assumes the itinerary's actual content rows are never deleted or
-    reordered while "fixing" formatting in PowerPoint (only its many unused
-    *blank* rows might be trimmed) -- a safe assumption since deleting a
-    content row would destroy real itinerary data, not just its styling.
-    Position-only matching (the previous approach) broke as soon as a
-    single row was removed, silently shifting every later row's
-    correspondence and misapplying borders to the wrong cells.
+    An earlier version matched purely by position ("the Nth non-blank row
+    in base is the Nth non-blank row in fixed"). That broke silently
+    whenever the count of non-blank rows differed between the two files --
+    e.g. the user typing anything into a normally-blank filler row while
+    fixing borders in PowerPoint turns it "non-blank", which shifts every
+    later row's positional correspondence by one and pairs each of them
+    against the wrong itinerary stop. Since the wrongly-paired rows often
+    happen to share similar generic template styling, the diff came out
+    looking empty for those rows -- the border/style fix silently failed to
+    save for exactly the rows after the shift (this is what happened with
+    Shiogama's 10 Tasting Treasures: real fixes on later stops were lost).
 
-    Blank rows are deliberately NOT matched/diffed at all: the template's
-    blank filler rows aren't all styled identically to begin with (e.g.
-    the very last row has different borders than one in the middle), so
-    pairing them up by order alone produces false-positive diffs of
-    template artifacts rather than real user fixes.
+    Matching by content text sidesteps this entirely: a row's
+    correspondence no longer depends on how many blank rows precede it or
+    got trimmed/added elsewhere in the file, only on which row actually
+    contains the same itinerary stop. This assumes cell TEXT itself isn't
+    changed while "fixing" formatting (only fill/border/font styling) --
+    already the documented constraint for this feature; a row whose text
+    was edited simply won't find a match and its fix won't be captured,
+    which is a contained, safe failure rather than a cascading one.
     """
-    base_content = [i for i, row in enumerate(base_rows) if not _is_blank_row([m.group(0) for m in _CELL_RE.finditer(row)])]
-    fixed_content = [i for i, row in enumerate(fixed_rows) if not _is_blank_row([m.group(0) for m in _CELL_RE.finditer(row)])]
-    return list(zip(base_content, fixed_content))
+    base_by_text: dict[tuple[str, ...], list[int]] = {}
+    for i, row in enumerate(base_rows):
+        texts = _row_cell_texts(row)
+        if any(texts):
+            base_by_text.setdefault(texts, []).append(i)
+
+    pairs: list[tuple[int, int]] = []
+    for j, row in enumerate(fixed_rows):
+        texts = _row_cell_texts(row)
+        if not any(texts):
+            continue
+        candidates = base_by_text.get(texts)
+        if candidates:
+            pairs.append((candidates.pop(0), j))
+    return pairs
 
 
 def capture_style_diff(fixed_path: str | Path, base_path: str | Path | None = None) -> dict:

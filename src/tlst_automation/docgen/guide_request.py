@@ -25,7 +25,14 @@ from pptx import Presentation
 from pptx.util import Pt
 
 from ..models import BookingRequest, ItineraryStop
-from ..rules import format_dietary_for_guide_request, rewrite_payment_label_for_pax, tba, tbd
+from ..rules import (
+    BAR_HOP_FOOD_BUDGET_MARKER,
+    bar_hop_food_budget_table_text,
+    format_dietary_for_guide_request,
+    rewrite_payment_label_for_pax,
+    tba,
+    tbd,
+)
 
 TEMPLATE_PATH = (
     Path(__file__).resolve().parent.parent.parent.parent / "templates" / "guide_request_template.pptx"
@@ -71,11 +78,18 @@ def _display_date_jp(iso_date: str) -> str:
 
 
 def _fee_text(booking: BookingRequest) -> str:
-    """Total guide fee, plus a compact breakdown when there's a non-zero
-    adjustment (e.g. extra hotel-pickup time) so the guide/office can see
-    what the total is actually made of, not just the final figure."""
+    """Total guide fee, plus a breakdown of what it's made of (base formula,
+    bar-hopping shop-arrangement bonus, time adjustment, etc.) so the guide/
+    office can see the total isn't just a flat number. Prefers the portal's
+    own `guide_fee_breakdown` (computed in portal_common.py from whichever
+    formula/checkboxes actually applied -- e.g. "バーホッピング基本謝金
+    5,000円 + 店舗調整担当 1,000円 / 合計 6,000円") over recomputing a
+    narrower version here that only accounted for guide_fee_adjustment and
+    silently dropped the shop-arrangement bonus."""
     if booking.guide_fee is None:
         return tbd(None)
+    if booking.guide_fee_breakdown:
+        return booking.guide_fee_breakdown
     text = f"{booking.guide_fee:,}円"
     if booking.guide_fee_adjustment:
         base = booking.guide_fee - booking.guide_fee_adjustment
@@ -139,14 +153,22 @@ def _fill_itinerary_table(slide, booking: BookingRequest) -> None:
     for row_offset in range(ITINERARY_MAX_ROWS):
         row = table.rows[ITINERARY_HEADER_ROWS + row_offset]
         stop = stops[row_offset] if row_offset < len(stops) else None
+        if stop and stop.payment_label.strip().startswith(BAR_HOP_FOOD_BUDGET_MARKER):
+            # A saved itinerary can use this marker instead of typing out the
+            # 1-4 guest food/drink budget breakdown by hand -- see rules.py.
+            # Matched as a prefix (not exact-equals) because some saved
+            # itineraries have this marker plus a stale, hand-typed guest
+            # count/amount left over from whichever past booking they were
+            # imported from (e.g. "ガイド飲食等含む\n2名の場合13,500円") --
+            # that stale single line must not win over the fresh, correct
+            # 1-4 guest table computed here for the CURRENT booking.
+            payment_label = bar_hop_food_budget_table_text()
+        elif stop:
+            payment_label = rewrite_payment_label_for_pax(stop.payment_label, booking.pax)
+        else:
+            payment_label = ""
         values = (
-            (
-                stop.time_label,
-                stop.stopover_name,
-                rewrite_payment_label_for_pax(stop.payment_label, booking.pax),
-                stop.payment_method,
-                stop.stopover_info,
-            )
+            (stop.time_label, stop.stopover_name, payment_label, stop.payment_method, stop.stopover_info)
             if stop
             else ("", "", "", "", "")
         )
