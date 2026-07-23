@@ -26,3 +26,4 @@ reference_examples/
 *.zip
 TLST_Tour_Portal_Share/
 TLST_PDF_Masker_Share/
+.env
